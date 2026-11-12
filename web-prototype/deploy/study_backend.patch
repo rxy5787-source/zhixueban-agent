@@ -1,0 +1,168 @@
+--- a/backend/web_api.py
++++ b/backend/web_api.py
+@@ -24,10 +24,10 @@
+ from .worker import Runner
+ from .web_content import OWNER, WebStore, archive_questions, candidates, eligible, is_library_deleted, questions, removed_items, visible_questions
+ from . import web_practice
+-from . import web_submissions
++from . import web_submissions, study_chat
+ 
+ DEFAULT_LIBRARIES = {'sql':'SQL 学习笔记','structure':'数据结构','english':'英语六级','reasoning':'行测资料分析'}
+-ItemKind = Literal['source','set','question','task']
++ItemKind = Literal['source','set','question','task','study']
+ ROOT = Path(os.getenv('AI_WEB_DATA_DIR', str(config.ROOT / 'runtime' / 'web'))).resolve()
+ store = WebStore(ROOT)
+ runner = Runner(store)
+@@ -49,6 +49,7 @@
+         ''')
+         web_practice.init_tables(db)
+         web_submissions.init_tables(db)
++        study_chat.init_tables(db)
+ init_web_tables()
+ 
+ @asynccontextmanager
+@@ -88,6 +89,7 @@
+     with request_store().db() as db:
+         events=[dict(row) for row in db.execute('SELECT stage,state,created FROM job_events WHERE job_id=? ORDER BY id',(job['id'],))]
+         saved_ids={row['question_id'] for row in db.execute('SELECT question_id FROM web_questions WHERE library_id=?',(library_id,))}
++        saved_study=db.execute('SELECT 1 FROM web_study_saved WHERE task_id=?',(job['id'],)).fetchone()
+         archived=is_library_deleted(db,library_id)
+         removed=removed_items(db,library_id)
+         library=db.execute('SELECT title FROM web_libraries WHERE id=?',(library_id,)).fetchone()
+@@ -107,6 +109,7 @@
+             'events':phase_events,'generatedQuestionCount':len(candidates(job)) if exam_info else sum(f.get('generatedCandidates',0) for f in job['result'].get('files',[])),
+             'acceptedQuestionCount':len(available),'requestedQuestionCount':job['request']['questionCount'],
+             'availableQuestions':available,
++            'study':study_chat.task_result(job,archived,removed,saved_study),
+             'examPractice':exam_info,
+             'libraryDeleted':archived,
+             'removedSet':('set',job['id']) in removed,
+@@ -188,6 +191,10 @@
+     return {'id':ident}
+ 
+ def item_label(db,library_id,kind,ident):
++    if kind=='study':
++        row=db.execute('''SELECT j.result FROM web_study_saved s JOIN jobs j ON s.task_id=j.id
++            WHERE s.library_id=? AND s.task_id=?''',(library_id,ident)).fetchone()
++        return json.loads(row['result'])['study']['title'] if row else None
+     if kind=='source':
+         row=db.execute("""SELECT f.name,MAX(j.state IN ('queued','running')) AS busy
+             FROM web_tasks AS t JOIN jobs AS j ON j.id=t.task_id
+@@ -255,7 +262,8 @@
+                 question_set=sets.setdefault(ident,{'id':ident,'taskId':ident,'count':0,
+                     'examPractice':item['ai'].get('reviewMethod')==exam_practice.METHOD})
+                 question_set['count']+=1
+-            result.append(dict(library,questionSets=list(sets.values()),sources=list(sources.values()),points=sorted(points)))
++            result.append(dict(library,questionSets=list(sets.values()),sources=list(sources.values()),points=sorted(points),
++                studyResults=study_chat.library_results(db,library['id'],hidden)))
+     return {'libraries':result,'deletedLibraries':deleted,'removedItems':removed}
+ 
+ @routes.get('/api/generation-tasks')
+@@ -295,13 +303,18 @@
+ def create_task(files: list[UploadFile]=File(...),requirements: str=Form(''),libraryId: str=Form(...),
+                 libraryName: str=Form(...),questionCount: int=Form(3,ge=1,le=12),questionType: str=Form('single_choice'),
+                 clientRequestId: str=Form('',pattern=r'^(?:[0-9a-f]{32})?$')):
+-    if questionType!='single_choice': raise HTTPException(422,'当前仅支持四选一单选题')
++    is_study = questionType in study_chat.STUDY_TYPES
++    if questionType!='single_choice' and not is_study:
++        raise HTTPException(422,'当前支持选择题、记忆口诀、填空和资料问答。')
++    if is_study and not 1 <= len(requirements.strip()) <= 1200:
++        raise HTTPException(422,'请填写学习要求，最多 1200 字。')
+     if not 1<=len(files)<=config.MAX_FILES: raise HTTPException(422,'每次选择1–5份资料')
+     check_library_id(libraryId)
+     with request_store().db() as db:require_active_library(db,libraryId)
+     try:
+         parsed=JobRequest(fileIds=['pending'],libraryName=libraryName,subject='资料学习',questionCount=questionCount,
+-                          requirements=requirements,requireModelGeneration=True,visionFallback=True)
++                          requirements='' if is_study else requirements,requireModelGeneration=True,visionFallback=True)
++        if is_study: parsed.requirements=requirements.strip()
+     except ValidationError as exc:
+         message='；'.join(error['msg'].removeprefix('Value error, ') for error in exc.errors())
+         raise HTTPException(422,message)
+@@ -339,8 +352,10 @@
+                     return previous
+             request_store().check_submission(db)
+             parsed.libraryName=resolve_library(db,libraryId,parsed.libraryName,now)
++            payload=parsed.model_dump()
++            if is_study: payload['studyKind']=questionType
+             db.executemany('INSERT INTO files VALUES(?,?,?,?,?,?)',metadata)
+-            db.execute("INSERT INTO jobs(id,owner,state,stage,request,result,error,created,updated) VALUES(?,?,'queued','等待处理',?,'{}','',?,?)",(ident,OWNER,json.dumps(parsed.model_dump(),ensure_ascii=False),now,now))
++            db.execute("INSERT INTO jobs(id,owner,state,stage,request,result,error,created,updated) VALUES(?,?,'queued','等待处理',?,'{}','',?,?)",(ident,OWNER,json.dumps(payload,ensure_ascii=False),now,now))
+             db.execute('INSERT INTO web_tasks VALUES(?,?)',(ident,libraryId))
+             if clientRequestId:
+                 db.execute('INSERT INTO web_submissions VALUES(?,?,?)', (clientRequestId, ident, fingerprint))
+@@ -431,4 +446,5 @@
+         db.execute('INSERT INTO web_tasks VALUES(?,?)',(new,library_id))
+     return {'taskId':new,'status':'queued'}
+ 
++routes.include_router(study_chat.router)
+ app.include_router(routes)
+--- a/backend/worker.py
++++ b/backend/worker.py
+@@ -44,6 +44,9 @@
+                 except Exception as exc:self.store.update(job['id'],'failed','处理失败',error=f'{type(exc).__name__}: {exc}'[:500])
+             else:self.stop.wait(.4)
+     def supervise(self,job,target=run_job_process):
++        if target is run_job_process and job['request'].get('studyKind'):
++            from .study_chat import run_job_process as run_study_process
++            target=run_study_process
+         args=(str(self.store.root),job)
+         if target is run_job_process:
+             args+=(type(self.store),)
+@@ -75,7 +78,7 @@
+         import generate_from_file as generator
+         import automatic_question_validator as validator
+         import multimodal_reader as reader
+-        from . import web_question_review
++        from . import study_chat, web_question_review
+         generator.OLLAMA_URL=validator.OLLAMA_URL=config.OLLAMA_URL
+         generator.MODEL_NAME=validator.REVIEW_MODEL=config.TEXT_MODEL
+         reader.VISION_MODEL=config.VISION_MODEL
+@@ -99,7 +102,9 @@
+             try:
+                 validate_file(Path(source['path']),source['name'])
+                 report['parsing']=[]
+-                sections=reader.iter_automatic_sections(Path(source['path']),self.store.root/'ocr_cache',checkpoint,vision_fallback=job['request'].get('visionFallback',False))
++                sections=study_chat.choice_sections(self.store,job,ident,lambda: reader.iter_automatic_sections(
++                    Path(source['path']),self.store.root/'ocr_cache',checkpoint,
++                    vision_fallback=job['request'].get('visionFallback',False)))
+                 file_parts=0
+                 for section in sections:
+                     if self.cancelled(job) or len(accepted)>=job['request']['questionCount']:break
+@@ -123,6 +128,11 @@
+                         checkpoint('已跳过缺少正文的段落')
+                         continue
+                     source_parts = split_practice_text(material, generator.MAX_CHARS) if model_only else generator.split_text(material)
++                    original_requirements=job['request'].get('requirements','')
++                    requirements=original_requirements
++                    if model_only:
++                        source_parts=study_chat.rank_choice_parts(source_parts,requirements)
++                        requirements=study_chat.choice_requirements(requirements)
+                     for part in source_parts:
+                         if self.cancelled(job) or len(accepted)>=job['request']['questionCount']:break
+                         if file_parts>=config.MAX_PARTS or parts>=12:break
+@@ -151,7 +161,7 @@
+                                 checkpoint(f'{stage} · {source["name"]} 第{file_parts}段')
+                                 remaining=job['request']['questionCount']-len(accepted)
+                                 count=min(4,remaining+1) if model_only else min(3,remaining)
+-                                created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=job['request'].get('requirements',''),difficulty=job['request'].get('difficulty',0),used_evidence=[q['explanation'] for q in accepted],allow_rule_generation=not model_only,compact_source=model_only)
++                                created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=requirements,difficulty=job['request'].get('difficulty',0),used_evidence=[q['explanation'] for q in accepted],allow_rule_generation=not model_only,compact_source=model_only)
+                                 if not created:rejected.append({'sourceFile':source['name'],'reasons':['本段没有新的、证据充分的可用题目']})
+                                 for q in created:
+                                     if isinstance(q,dict):
+@@ -164,6 +174,15 @@
+                                 checkpoint(f'自动质量初筛 · {source["name"]} 第{file_parts}段')
+                                 review=web_question_review.validate_questions if model_only else validator.validate_questions
+                                 passed,bad=review(created,part,accepted)
++                                if model_only:
++                                    useful=[]
++                                    for q in passed:
++                                        issue=study_chat.choice_teaching_issue(q['question'],original_requirements)
++                                        if issue:
++                                            bad.append({'question':q,'reasons':[issue],'status':'rejected_or_needs_review'})
++                                        else:
++                                            useful.append(q)
++                                    passed=useful
+                                 for q in passed:
+                                     q.update(sourceFile=source['name'],sourceFileId=ident,sourceHash=source['sha256'],sourceLocation=section['location'],generationModel=q.get('generationModel',config.TEXT_MODEL),visualAssisted=section['visualAssisted'])
+                                     q.update(extraction=section.get('extraction','text'),ocrConfidence=section.get('ocrConfidence'),textOnly=True)

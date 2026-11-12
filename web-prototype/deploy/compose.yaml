@@ -1,0 +1,84 @@
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      TRIAL_HOST: ${TRIAL_HOST:?Set TRIAL_HOST in .env}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+
+  app:
+    build: .
+    restart: unless-stopped
+    init: true
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
+    environment:
+      TRIAL_PUBLIC_ORIGIN: https://${TRIAL_HOST:?Set TRIAL_HOST in .env}
+      TRIAL_SECRET: ${TRIAL_SECRET:?Set TRIAL_SECRET in .env}
+      TRIAL_MAX_SPACES: ${TRIAL_MAX_SPACES:-32}
+      TRIAL_DATA_DIR: /data/trial
+      TRIAL_FRONTEND_DIR: /app/public
+      AI_WEB_DATA_DIR: /data/local-adapter
+      OLLAMA_URL: http://ollama:11434/api/chat
+      AI_TEXT_MODEL: ${AI_TEXT_MODEL:-qwen3:1.7b}
+      AI_VISION_MODEL: ${AI_VISION_MODEL:-qwen3-vl:2b-instruct}
+    volumes:
+      - trial_data:/data
+    depends_on:
+      models:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, "import os,urllib.request; h=os.environ['TRIAL_PUBLIC_ORIGIN'].split('://',1)[1]; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8080/healthz',headers={'Host':h}),timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    networks: [edge, inference]
+
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    environment:
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_NUM_PARALLEL: '1'
+      OLLAMA_MAX_LOADED_MODELS: '1'
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: [CMD, ollama, list]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [inference]
+
+  models:
+    image: ollama/ollama:latest
+    entrypoint: [/bin/sh, -ec]
+    command: ['ollama pull "$$AI_TEXT_MODEL" && ollama pull "$$AI_VISION_MODEL"']
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      AI_TEXT_MODEL: ${AI_TEXT_MODEL:-qwen3:1.7b}
+      AI_VISION_MODEL: ${AI_VISION_MODEL:-qwen3-vl:2b-instruct}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    networks: [inference]
+
+volumes:
+  trial_data:
+  ollama_data:
+  caddy_data:
+  caddy_config:
+
+networks:
+  edge:
+  inference:

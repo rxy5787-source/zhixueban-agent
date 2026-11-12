@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#faf8f2">
+  <title>知学伴 · 在线试用</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #303a2c; background: #faf8f2; font-family: system-ui, sans-serif; }
+    main { width: min(100%, 420px); margin: 0 auto; padding: 64px 24px; }
+    .brand { font-size: 18px; font-weight: 700; }
+    .book { display: inline-block; margin-right: 8px; color: #55764b; font-size: 26px; }
+    h1 { margin-top: 60px; font-size: 28px; line-height: 1.5; }
+    .intro, .note { color: #73776c; font-size: 14px; line-height: 1.9; }
+    form { margin-top: 28px; padding: 24px; background: #fff; border: 1px solid #e5e4d8; border-radius: 22px; }
+    label { display: block; font-size: 15px; font-weight: 600; }
+    input { width: 100%; margin: 12px 0 18px; padding: 14px 12px; border: 1px solid #d6dbcf; border-radius: 12px; font: inherit; }
+    input:focus { outline: 2px solid #55764b; outline-offset: 2px; }
+    button { width: 100%; padding: 14px; color: white; background: #55764b; border: 0; border-radius: 12px; font: inherit; cursor: pointer; }
+    .error { color: #a14531; font-size: 14px; line-height: 1.7; }
+    .note { margin-top: 24px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="brand"><span class="book" aria-hidden="true">▤</span>知学伴</div>
+    <h1>带上资料，<br>一起学会一点新知识。</h1>
+    <p class="intro">上传学习资料，按你的要求生成练习。<br>请向分享者获取本次试用的访问码。</p>
+    <form action="/trial-access" method="post">
+      <label for="access-code">试用访问码</label>
+      <input id="access-code" name="accessCode" type="password" maxlength="128" required autocomplete="off" placeholder="输入分享者提供的访问码">
+      <!--ACCESS_ERROR-->
+      <button type="submit">进入学习空间</button>
+    </form>
+    <p class="note">请使用非敏感资料试用。资料和学习记录保存在分享者的电脑上，当前浏览器拥有独立的学习空间。</p>
+  </main>
+</body>
+</html>

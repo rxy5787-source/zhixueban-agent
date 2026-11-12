@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compact app scale, refined after device review. Keep system font scaling and touch sizes. -->
+    <dimen name="type_display_large">24sp</dimen>
+    <dimen name="type_display_medium">22sp</dimen>
+    <dimen name="type_display_small">20sp</dimen>
+    <dimen name="type_headline_large">20sp</dimen>
+    <dimen name="type_hero">18sp</dimen>
+    <dimen name="type_page">16sp</dimen>
+    <dimen name="type_section">14sp</dimen>
+    <dimen name="type_item">13sp</dimen>
+    <dimen name="type_body">12sp</dimen>
+    <dimen name="type_secondary">11sp</dimen>
+    <dimen name="type_caption">11sp</dimen>
+    <dimen name="type_metric">20sp</dimen>
+    <dimen name="type_word">24sp</dimen>
+    <dimen name="line_display_large">32sp</dimen>
+    <dimen name="line_display_medium">30sp</dimen>
+    <dimen name="line_display_small">28sp</dimen>
+    <dimen name="line_headline_large">28sp</dimen>
+    <dimen name="line_hero">26sp</dimen>
+    <dimen name="line_page">24sp</dimen>
+    <dimen name="line_section">21sp</dimen>
+    <dimen name="line_item">20sp</dimen>
+    <dimen name="line_body">18sp</dimen>
+    <dimen name="line_secondary">17sp</dimen>
+    <dimen name="line_caption">16sp</dimen>
+    <dimen name="line_metric">26sp</dimen>
+    <dimen name="line_word">32sp</dimen>
+
+    <style name="TextAppearance.Zhixue.Body" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textSize">@dimen/type_body</item>
+        <item name="android:lineHeight">@dimen/line_body</item>
+        <item name="android:fontFamily">sans-serif</item>
+    </style>
+    <style name="TextAppearance.Zhixue.Reading" parent="TextAppearance.Material3.BodyLarge">
+        <item name="android:textSize">@dimen/type_item</item>
+        <item name="android:lineHeight">@dimen/line_item</item>
+        <item name="android:fontFamily">sans-serif</item>
+    </style>
+    <style name="TextAppearance.Zhixue.Secondary" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:textSize">@dimen/type_secondary</item>
+        <item name="android:lineHeight">@dimen/line_secondary</item>
+        <item name="android:fontFamily">sans-serif</item>
+    </style>
+    <style name="TextAppearance.Zhixue.Page" parent="TextAppearance.Material3.TitleLarge">
+        <item name="android:textSize">@dimen/type_page</item>
+        <item name="android:lineHeight">@dimen/line_page</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+    <style name="TextAppearance.Zhixue.Section" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:textSize">@dimen/type_section</item>
+        <item name="android:lineHeight">@dimen/line_section</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+    <style name="TextAppearance.Zhixue.Label" parent="TextAppearance.Material3.LabelLarge">
+        <item name="android:textSize">@dimen/type_body</item>
+        <item name="android:lineHeight">@dimen/line_body</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+    <style name="Theme.Zhixue.Typography" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textSize">@dimen/type_body</item>
+        <item name="textAppearanceBodyLarge">@style/TextAppearance.Zhixue.Reading</item>
+        <item name="textAppearanceBodyMedium">@style/TextAppearance.Zhixue.Body</item>
+        <item name="textAppearanceBodySmall">@style/TextAppearance.Zhixue.Secondary</item>
+        <item name="textAppearanceTitleLarge">@style/TextAppearance.Zhixue.Page</item>
+        <item name="textAppearanceTitleMedium">@style/TextAppearance.Zhixue.Section</item>
+        <item name="textAppearanceHeadlineSmall">@style/TextAppearance.Zhixue.Page</item>
+        <item name="textAppearanceLabelLarge">@style/TextAppearance.Zhixue.Label</item>
+    </style>
+</resources>

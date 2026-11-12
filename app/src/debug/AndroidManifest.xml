@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- MainActivity is the sole launcher in every build. This host is internal font-test tooling. -->
+        <activity
+            android:name=".ui.prototype.HomePrototypeActivity"
+            android:exported="false"
+            android:label="@string/app_name" />
+        <activity
+            android:name=".ui.demo.ComposeDemoActivity"
+            android:exported="false"
+            android:label="@string/compose_demo_label" />
+    </application>
+</manifest>

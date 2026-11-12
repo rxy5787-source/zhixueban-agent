@@ -1,0 +1,15 @@
+<resources>
+    <item name="compose_home_root" type="id" />
+    <string name="home_brand">知学伴</string>
+    <string name="home_today_plan">今日学习</string>
+    <string name="home_start_learning">开始今天的学习</string>
+    <string name="home_focus_title">最近需要加强</string>
+    <string name="home_footprint_title">学习足迹</string>
+    <string name="home_today">今日</string>
+    <string name="home_libraries">知识库</string>
+    <string name="home_profile">我的</string>
+    <string name="home_day_accessibility">%1$s，%2$s%3$s</string>
+    <string name="home_day_studied">有学习足迹</string>
+    <string name="home_day_rest">留白的一天</string>
+    <string name="home_day_current">，今天</string>
+</resources>

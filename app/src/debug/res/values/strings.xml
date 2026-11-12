@@ -1,0 +1,11 @@
+<resources>
+    <string name="compose_demo_label">Compose 验证</string>
+    <string name="compose_demo_host">原生 View 容器</string>
+    <string name="compose_demo_title">Compose 已就绪</string>
+    <string name="compose_demo_description">这里用于验证新界面的显示和交互，不会写入学习记录。</string>
+    <string name="compose_demo_counter_title">试试交互</string>
+    <string name="compose_demo_counter">已点击 %1$d 次</string>
+    <string name="compose_demo_increment">点击 +1</string>
+    <string name="compose_demo_reset">重置</string>
+    <string name="compose_demo_close">关闭测试页</string>
+</resources>

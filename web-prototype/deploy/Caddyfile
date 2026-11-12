@@ -1,0 +1,9 @@
+{$TRIAL_HOST} {
+	request_body {
+		max_size 25MiB
+	}
+	header X-Content-Type-Options nosniff
+	header Referrer-Policy same-origin
+	encode zstd gzip
+	reverse_proxy app:8080
+}

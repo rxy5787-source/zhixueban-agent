@@ -1,0 +1,15 @@
+<resources>
+    <item name="ai_upload" type="id" />
+    <item name="ai_upload_status" type="id" />
+    <item name="ai_requirements" type="id" />
+    <item name="ai_generate" type="id" />
+    <item name="ai_status" type="id" />
+    <item name="ai_results" type="id" />
+    <item name="ai_import" type="id" />
+    <item name="ai_cancel" type="id" />
+    <item name="ai_extracted_text" type="id" />
+    <item name="ai_target" type="id" />
+    <item name="ai_library_name" type="id" />
+    <item name="ai_adaptive" type="id" />
+    <item name="ai_adaptive_summary" type="id" />
+</resources>

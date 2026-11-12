@@ -1,0 +1,15 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Base.Theme.Adaptivequizapp" parent="Theme.Zhixue.Typography">
+        <item name="colorPrimary">#137D73</item>
+        <item name="colorSecondary">#627873</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">#F7FAF8</item>
+        <item name="android:navigationBarColor">#FFFFFF</item>
+        <!-- Customize your light theme here. -->
+        <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+    </style>
+
+    <style name="Theme.Adaptivequizapp" parent="Base.Theme.Adaptivequizapp" />
+</resources>
