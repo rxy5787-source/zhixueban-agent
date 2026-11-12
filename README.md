@@ -2,11 +2,30 @@
 
 知学伴从学习资料生成有原文依据的口诀和练习，并根据作答记录更新知识点掌握情况。这个仓库包含 Android 客户端、Web 原型、Python 生成服务和独立的账号服务。
 
-- Web 使用 React 和 TypeScript 展示学习空间、资料与生成任务。
-- Python 使用 FastAPI、持久任务与本地 Ollama，执行资料解析、生成和复核。
-- Android 使用原生 Java、Kotlin 和 Compose，部分页面仍为传统 View。
+## 从这里开始
 
-开发路线与验收标准见 [Agent 开发路线](docs/AGENT_ROADMAP.md)。生成质量的样本和实测边界见 [评测用例](docs/STUDY_GENERATION_EVAL.md)。
+- **运行项目** → [Windows 本地演示](#windows-本地演示)
+- **找下一项任务** → [开发任务与验收](#开发任务与验收) · [Issues](https://github.com/rxy5787-source/zhixueban-agent/issues)
+- **看正在审查的代码和测试** → [Pull requests](https://github.com/rxy5787-source/zhixueban-agent/pulls) · [Actions](https://github.com/rxy5787-source/zhixueban-agent/actions)
+- **看设计、评测和部署** → [开发路线图](docs/AGENT_ROADMAP.md) · [生成质量评测](docs/STUDY_GENERATION_EVAL.md) · [Web 部署](web-prototype/deploy/README.md)
+
+## 项目目录
+
+- [Android 客户端](app/) · Java、Kotlin 和 Compose，部分页面使用传统 View。
+- [Web 试用端](web-prototype/) · React 和 TypeScript，提供学习对话、知识库、出题任务与练习。
+- [AI 生成服务](python-ai/) · FastAPI、后台任务和本地 Ollama，负责资料解析、生成与复核。
+- [账号服务](auth-server/) · 独立 Java 服务。
+
+## 开发任务与验收
+
+- **P0 · 可复现启动与 CI** · [ZH-01 让新开发者能启动项目](https://github.com/rxy5787-source/zhixueban-agent/issues/2) · [ZH-02 设置 CI 和版本基线](https://github.com/rxy5787-source/zhixueban-agent/issues/3)
+- **P1 · 可靠性与权限** · [ZH-03 验证任务重启和重试](https://github.com/rxy5787-source/zhixueban-agent/issues/4) · [ZH-04 验证学习空间隔离](https://github.com/rxy5787-source/zhixueban-agent/issues/5) · [ZH-05 建立分阶段日志](https://github.com/rxy5787-source/zhixueban-agent/issues/6)
+- **P2 · 质量与容量** · [ZH-06 固定口诀和出题评测集](https://github.com/rxy5787-source/zhixueban-agent/issues/7) · [ZH-07 测量单机并发容量](https://github.com/rxy5787-source/zhixueban-agent/issues/8)
+- **P3 · Agent 与作品展示** · [ZH-08 提取可验证的 Agent 工具接口](https://github.com/rxy5787-source/zhixueban-agent/issues/9) · [ZH-09 加入有边界的任务路由](https://github.com/rxy5787-source/zhixueban-agent/issues/10) · [ZH-10 完成求职作品展示](https://github.com/rxy5787-source/zhixueban-agent/issues/11)
+
+每个 Issue 记录目标、验收条件和相关 PR。查看 PR 的 **Files changed** 回顾代码，查看 **Checks** 核对自动测试。改动合入后，在 Issue 留下提交和验收结果，再关闭任务。
+
+ZH-02 的 [PR #1](https://github.com/rxy5787-source/zhixueban-agent/pull/1) 已有 CI 结果。ZH-03 的 [PR #12](https://github.com/rxy5787-source/zhixueban-agent/pull/12) 以 ZH-02 分支为目标，便于单独查看任务恢复的改动。接下来按顺序处理这两个 PR，再进入 [ZH-04 验证学习空间隔离](https://github.com/rxy5787-source/zhixueban-agent/issues/5)。
 
 ## Windows 本地演示
 
