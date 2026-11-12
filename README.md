@@ -10,16 +10,23 @@
 
 ## Windows 本地演示
 
-准备 Python 3.12、Node.js 22.12+ 和 Git。在 PowerShell 中执行。
+准备 Git、PowerShell 7、Python 3.12、Node.js 22.12+ 和 Ollama。在仓库根目录执行以下命令。
 
 ```powershell
 py -3.12 -m venv python-ai/.venv
 & ./python-ai/.venv/Scripts/python.exe -m pip install -r python-ai/requirements.txt
 npm.cmd --prefix web-prototype ci
+ollama pull qwen3:1.7b
 & ./tools/start-web-study-preview.ps1 -PythonProject (Resolve-Path python-ai).Path
 ```
 
-打开 [本机预览](http://127.0.0.1:8095/#home)。需要真实生成时，请先在本机启动 Ollama，准备 qwen3:1.7b。演示用文字资料可以使用仓库内自编的 SQL 示例。本地预览数据保存在 .verification 目录。
+运行命令前先打开 Ollama。如果 `ollama list` 提示连接失败，在另一个终端运行 `ollama serve`。下面的文字资料演示只需要文本模型。
+
+1. 打开 [本机预览](http://127.0.0.1:8095/#home)，上传仓库内自编的 [SQL 短文本资料](web-prototype/test-materials/SQL短文本资料.txt)。
+2. 输入「生成 1 道 SQL 基础四选一单选题，考查 WHERE 过滤数据行的作用」，选择知识库并提交。
+3. 等待质检和归档完成，打开结果中的练习，提交答案后查看知识点报告。
+
+本地预览数据保存在 `web-prototype/.verification/study-local`，按 `Ctrl+C` 停止预览。自动验收脚本 `web-prototype/deploy/smoke_trial.py` 使用独立数据目录，检查真实模型调用、自动归档、答题报告和第二个访客的访问隔离。
 
 ## 部署与实现边界
 

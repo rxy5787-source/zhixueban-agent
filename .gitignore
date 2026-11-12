@@ -9,6 +9,9 @@
 **/.verification/
 **/runtime/
 **/data/
+!/web-prototype/src/data/
+/web-prototype/src/data/*
+!/web-prototype/src/data/demo.ts
 **/.env*
 !**/.env.example
 **/*.log
