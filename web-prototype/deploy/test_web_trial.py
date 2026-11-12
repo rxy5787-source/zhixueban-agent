@@ -1,8 +1,14 @@
 import concurrent.futures
+from pathlib import Path
+import time
 
 from fastapi.testclient import TestClient
+from requests import ReadTimeout
 
+from backend import web_api
 from backend.web_trial import COOKIE_LIFETIME, MAX_JOBS_PER_SPACE, MAX_LIBRARIES_PER_SPACE, create_app
+from backend.web_trial import TrialStore
+from backend.worker import Runner
 
 
 ORIGIN = 'https://trial.example.test'
@@ -10,11 +16,11 @@ SECRET = 'testing-secret-only-' * 2
 COOKIE = '__Host-zhixue-trial'
 
 
-def app_at(tmp_path, maximum=32, **options):
+def app_at(tmp_path, maximum=32, *, start_worker=False, **options):
     frontend = tmp_path / 'public'
     (frontend / 'assets').mkdir(parents=True, exist_ok=True)
     (frontend / 'index.html').write_text('<title>Trial</title>')
-    return create_app(tmp_path / 'data', frontend, ORIGIN, SECRET, maximum, start_worker=False, **options)
+    return create_app(tmp_path / 'data', frontend, ORIGIN, SECRET, maximum, start_worker=start_worker, **options)
 
 
 def client(app):
@@ -295,3 +301,152 @@ def test_disconnected_upload_returns_response_without_creating_task():
         assert responses[0]['status'] == 499
 
     asyncio.run(exercise())
+
+
+def submit_recovery_task(browser, library='recovery'):
+    browser.get('/')
+    material = Path(__file__).resolve().parents[1] / 'test-materials' / 'SQL短文本资料.txt'
+    response = browser.post('/api/generation-tasks', headers={'Origin': ORIGIN},
+                            files={'files': ('sql.txt', material.read_bytes())},
+                            data={'libraryId': library, 'libraryName': 'SQL',
+                                  'requirements': '生成一道考查 WHERE 的单选题', 'questionCount': 1})
+    assert response.status_code == 202, response.text
+    return response.json()['taskId']
+
+
+def browser_store(tmp_path, browser):
+    space = browser.cookies[COOKIE].split('.')[0]
+    return TrialStore(tmp_path / 'data' / 'spaces' / space)
+
+
+def test_generation_recovers_queued_and_running_jobs_after_restart(tmp_path, monkeypatch):
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    queued_browser, running_browser, cancelling_browser = (client(app) for _ in range(3))
+    queued, running, cancelling = (submit_recovery_task(browser)
+                                   for browser in (queued_browser, running_browser, cancelling_browser))
+    running_store = browser_store(tmp_path, running_browser)
+    assert running_store.claim()['id'] == running
+    checkpoint = {'files': [{'name': 'sql.txt', 'status': 'parsing'}]}
+    running_store.update(running, 'running', 'AI生成题目', checkpoint)
+    assert browser_store(tmp_path, cancelling_browser).claim()['id'] == cancelling
+    assert cancelling_browser.post(f'/api/generation-tasks/{cancelling}/cancel',
+                                   headers={'Origin': ORIGIN}).status_code == 200
+
+    def complete_queued(worker, job):
+        assert job['id'] == queued
+        worker.store.update(queued, 'failed', '测试处理完成', error='测试模型已处理原任务')
+
+    monkeypatch.setattr(Runner, 'supervise', complete_queued)
+    restarted = app_at(tmp_path, start_worker=True)
+    with client(restarted) as browser:
+        browser.cookies.update(running_browser.cookies)
+        deadline = time.monotonic() + 5
+        while running_store.get(running)['state'] == 'running' and time.monotonic() < deadline:
+            time.sleep(.02)
+        # Simulate a stale worker attempting to write after recovery.
+        running_store.update(running, 'succeeded', '旧进程回写', {'files': []})
+        recovered = browser.get(f'/api/generation-tasks/{running}').json()
+        assert recovered['status'] == 'interrupted'
+        assert '可重试' in recovered['stage']
+        assert recovered['files'] == checkpoint['files']
+        browser.cookies.update(cancelling_browser.cookies)
+        assert browser.get(f'/api/generation-tasks/{cancelling}').json()['status'] == 'cancelled'
+        browser.cookies.update(queued_browser.cookies)
+        while True:
+            resumed = browser.get(f'/api/generation-tasks/{queued}').json()
+            if resumed['status'] == 'failed' or time.monotonic() >= deadline:
+                break
+            time.sleep(.02)
+        assert resumed['taskId'] == queued
+        assert resumed['stage'] == '测试处理完成'
+
+
+def test_generation_timeout_is_visible_and_can_be_retried(tmp_path, monkeypatch):
+    import generate_from_file
+
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    browser = client(app)
+    ident = submit_recovery_task(browser)
+    store = browser_store(tmp_path, browser)
+    job = store.claim()
+
+    def model_timeout(*args, **kwargs):
+        raise ReadTimeout('simulated Ollama read timeout')
+
+    monkeypatch.setattr(generate_from_file, 'generate_questions', model_timeout)
+    Runner(store).run(job)
+    task = browser.get(f'/api/generation-tasks/{ident}').json()
+    assert task['status'] == 'failed', task
+    assert '等待本机模型响应超时' in task['error'], task
+    retry = browser.post(f'/api/generation-tasks/{ident}/retry', headers={'Origin': ORIGIN})
+    assert retry.status_code == 202, retry.text
+    new = store.get(retry.json()['taskId'])
+    assert new['request']['fileIds'] == job['request']['fileIds']
+    duplicate = browser.post(f'/api/generation-tasks/{ident}/retry', headers={'Origin': ORIGIN})
+    assert duplicate.status_code == 202
+    assert duplicate.json() == retry.json()
+
+
+def wait_for_cancellation(root, job):
+    (Path(root) / 'child-started').touch()
+    time.sleep(30)
+
+
+def test_cancel_stops_active_child_and_keeps_checkpoint(tmp_path, monkeypatch):
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
+    browser = client(app_at(tmp_path))
+    ident = submit_recovery_task(browser)
+    store = browser_store(tmp_path, browser)
+    job = store.claim()
+    checkpoint = {'files': [{'name': 'sql.txt', 'status': 'parsing'}]}
+    store.update(ident, 'running', 'AI生成题目', checkpoint)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        active = pool.submit(Runner(store).supervise, job, wait_for_cancellation)
+        try:
+            deadline = time.monotonic() + 10
+            while not (store.root / 'child-started').exists() and time.monotonic() < deadline:
+                time.sleep(.02)
+            assert (store.root / 'child-started').exists()
+        finally:
+            response = browser.post(f'/api/generation-tasks/{ident}/cancel', headers={'Origin': ORIGIN})
+            assert response.status_code == 200, response.text
+        active.result(timeout=5)
+    cancelled = browser.get(f'/api/generation-tasks/{ident}').json()
+    assert cancelled['status'] == 'cancelled'
+    assert cancelled['files'] == checkpoint['files']
+
+
+def test_concurrent_retries_and_repeated_archiving_are_idempotent(tmp_path):
+    app = app_at(tmp_path)
+    browser = client(app)
+    browser.get('/')
+    # The deterministic exam generator lets both requests reach a terminal state immediately.
+    original = create_exam(browser, 'recovery').json()['taskId']
+    path = f'/api/generation-tasks/{original}'
+    peers = [client(app), client(app)]
+    for peer in peers:
+        peer.cookies.update(browser.cookies)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(lambda peer: peer.post(path + '/retry', headers={'Origin': ORIGIN}), peers))
+    assert all(response.status_code == 202 for response in responses), [r.text for r in responses]
+    retried = responses[0].json()['taskId']
+    assert retried != original
+    assert responses[1].json()['taskId'] == retried
+    assert len(browser.get('/api/generation-tasks').json()['tasks']) == 2
+
+    restarted = client(app_at(tmp_path))
+    restarted.cookies.update(browser.cookies)
+    assert restarted.post(path + '/retry', headers={'Origin': ORIGIN}).json()['taskId'] == retried
+    store = browser_store(tmp_path, restarted)
+    with store.db() as db:
+        saved = db.execute('SELECT question_id FROM web_questions WHERE library_id=? ORDER BY question_id',
+                           ('recovery',)).fetchall()
+    assert saved
+    for _ in range(2):
+        response = restarted.post(f'/api/generation-tasks/{retried}/save', headers={'Origin': ORIGIN})
+        assert response.status_code == 200, response.text
+    with store.db() as db:
+        assert db.execute('SELECT question_id FROM web_questions WHERE library_id=? ORDER BY question_id',
+                          ('recovery',)).fetchall() == saved

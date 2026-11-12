@@ -41,7 +41,7 @@
          db.executescript('''
          CREATE TABLE IF NOT EXISTS web_libraries(id TEXT PRIMARY KEY,title TEXT NOT NULL,created REAL NOT NULL);
          CREATE TABLE IF NOT EXISTS web_deleted_libraries(library_id TEXT PRIMARY KEY,deleted REAL NOT NULL);
-@@ -41,6 +48,7 @@
+@@ -42,6 +49,7 @@
          CREATE TABLE IF NOT EXISTS web_questions(question_id TEXT NOT NULL,library_id TEXT NOT NULL,task_id TEXT NOT NULL,payload TEXT NOT NULL,saved REAL NOT NULL,PRIMARY KEY(library_id,question_id));
          ''')
          web_practice.init_tables(db)
@@ -49,7 +49,7 @@
  init_web_tables()
  
  @asynccontextmanager
-@@ -64,8 +72,8 @@
+@@ -65,8 +73,8 @@
      return await call_next(request)
  
  def task(ident):
@@ -60,7 +60,7 @@
          link=db.execute('SELECT library_id FROM web_tasks WHERE task_id=?',(ident,)).fetchone()
      if not job or not link: raise HTTPException(404,'生成任务不存在')
      return job,link['library_id']
-@@ -77,7 +85,7 @@
+@@ -78,7 +86,7 @@
      return 'parsing'
  
  def task_view(job, library_id):
@@ -69,7 +69,7 @@
          events=[dict(row) for row in db.execute('SELECT stage,state,created FROM job_events WHERE job_id=? ORDER BY id',(job['id'],))]
          saved_ids={row['question_id'] for row in db.execute('SELECT question_id FROM web_questions WHERE library_id=?',(library_id,))}
          archived=is_library_deleted(db,library_id)
-@@ -133,7 +141,7 @@
+@@ -134,7 +142,7 @@
      db.execute('INSERT INTO web_libraries VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET title=excluded.title',(ident,title,time.time()))
  
  def put_library(ident,title):
@@ -78,7 +78,7 @@
          db.execute('BEGIN IMMEDIATE')
          write_library(db,ident,title)
  
-@@ -145,19 +153,19 @@
+@@ -146,19 +154,19 @@
      db.execute('INSERT OR IGNORE INTO web_libraries VALUES(?,?,?)',(ident,title,now))
      return db.execute('SELECT title FROM web_libraries WHERE id=?',(ident,)).fetchone()['title']
  
@@ -102,7 +102,7 @@
          db.execute('BEGIN IMMEDIATE')
          if is_library_deleted(db,ident):return {'id':ident}
          if db.execute("""SELECT 1 FROM web_tasks AS task JOIN jobs AS job ON job.id=task.task_id
-@@ -169,10 +177,10 @@
+@@ -170,10 +178,10 @@
          db.execute('INSERT INTO web_deleted_libraries VALUES(?,?)',(ident,time.time()))
      return {'id':ident}
  
@@ -115,7 +115,7 @@
          db.execute('BEGIN IMMEDIATE')
          if not db.execute('SELECT 1 FROM web_libraries WHERE id=?',(ident,)).fetchone():
              raise HTTPException(404,'知识库不存在')
-@@ -198,10 +206,10 @@
+@@ -199,10 +207,10 @@
      row=db.execute('SELECT payload FROM web_questions WHERE library_id=? AND question_id=?',(library_id,ident)).fetchone()
      return json.loads(row['payload'])['prompt'] if row else None
  
@@ -128,7 +128,7 @@
          db.execute('BEGIN IMMEDIATE')
          require_active_library(db,library_id)
          label=item_label(db,library_id,kind,ident)
-@@ -209,18 +217,18 @@
+@@ -210,18 +218,18 @@
          db.execute('INSERT OR IGNORE INTO web_removed_items VALUES(?,?,?,?,?)',(library_id,kind,ident,label,time.time()))
      return {'id':ident}
  
@@ -151,7 +151,7 @@
          result=[]
          deleted=[dict(row) for row in db.execute('''SELECT lib.id,lib.title FROM web_libraries AS lib
              JOIN web_deleted_libraries AS trash ON trash.library_id=lib.id ORDER BY trash.deleted DESC''')]
-@@ -233,11 +241,11 @@
+@@ -234,11 +242,11 @@
              hidden=removed_items(db,library['id'])
              sources={};points=set()
              for link in db.execute('SELECT task_id FROM web_tasks WHERE library_id=?',(library['id'],)):
@@ -165,7 +165,7 @@
                      if source: sources[file_id]={'id':file_id,'name':source['name'],'size':source['size']}
              for row in db.execute('SELECT task_id,payload FROM web_questions WHERE library_id=? ORDER BY saved DESC',(library['id'],)):
                  item=json.loads(row['payload'])
-@@ -250,9 +258,9 @@
+@@ -251,9 +259,9 @@
              result.append(dict(library,questionSets=list(sets.values()),sources=list(sources.values()),points=sorted(points)))
      return {'libraries':result,'deletedLibraries':deleted,'removedItems':removed}
  
@@ -177,34 +177,26 @@
          rows=db.execute('''SELECT j.id AS taskId,j.state AS status,j.stage,j.created,t.library_id AS libraryId,
              COALESCE(l.title,json_extract(j.request,'$.libraryName'),t.library_id) AS libraryName
              FROM jobs AS j JOIN web_tasks AS t ON t.task_id=j.id
-@@ -262,40 +270,44 @@
+@@ -263,11 +271,13 @@
              ORDER BY CASE WHEN j.state IN ('queued','running') THEN 0 ELSE 1 END,j.created DESC LIMIT 30''',(OWNER,))
          return {'tasks':[dict(row) for row in rows]}
  
 -@app.post('/api/exam-practice-tasks',status_code=201)
 +@routes.post('/api/exam-practice-tasks',status_code=201)
  def create_exam_practice(value: ExamPracticeInput):
-     ident=uuid.uuid4().hex
-     start=time.time()
-     accepted,points=exam_practice.generate(value.questionCount,value.topic,ident)
 -    with store.db() as db:
 -        db.execute('BEGIN IMMEDIATE')
-+    with request_store().db() as db:
+-        return insert_exam_practice(db, store, value)
++    target_store = request_store()
++    with target_store.db() as db:
 +        db.execute('BEGIN IMMEDIATE')
-+        request_store().check_submission(db)
-         title=resolve_library(db,value.libraryId,value.libraryName,start)
-         request={'fileIds':[],'libraryName':title,'subject':'软件设计师计算专项','points':points,
-                  'questionCount':value.questionCount,'examTopic':value.topic}
-         job={'id':ident,'owner':OWNER,'request':request}
--        result=result_bundle(store.service_id,job,accepted,[],[])
-+        result=result_bundle(request_store().service_id,job,accepted,[],[])
-         result['reviewNote']='按软件设计师公开考试范围编写的原创模拟题。题干参数、唯一答案与逐步解析由程序计算。'
-         db.execute('''INSERT INTO jobs(id,owner,state,stage,request,result,error,created,updated)
-             VALUES(?,?,'succeeded','专项题已生成',?,?,'',?,?)''',(ident,OWNER,json.dumps(request,ensure_ascii=False),
-                 json.dumps(result,ensure_ascii=False),start,time.time()))
-         db.execute('INSERT INTO web_tasks VALUES(?,?)',(ident,value.libraryId))
--        store.publish_result(db, ident, 'succeeded', result, start)
-+        request_store().publish_result(db, ident, 'succeeded', result, start)
++        target_store.check_submission(db)
++        return insert_exam_practice(db, target_store, value)
+ 
+ 
+ def insert_exam_practice(db, target_store, value):
+@@ -287,20 +297,23 @@
+     target_store.publish_result(db, ident, 'succeeded', result, start)
      return {'taskId':ident,'status':'succeeded'}
  
 -@app.post('/api/generation-tasks',status_code=202)
@@ -231,7 +223,7 @@
      if not readiness['generationReady']:
          issue=readiness['generationIssue'].replace('已上传的资料会保留。','当前尚未创建任务，请保留文件选择并在恢复服务后重试。').replace('资料已保留，','本次尚未创建任务，')
          raise HTTPException(503,issue)
-@@ -303,7 +315,7 @@
+@@ -308,7 +321,7 @@
      try:
          for upload in files:
              name=Path((upload.filename or 'file').replace('\\','/')).name
@@ -240,7 +232,7 @@
              written.append(path); digest=hashlib.sha256(); size=0
              with path.open('wb') as out:
                  while chunk:=upload.file.read(65536):
-@@ -313,14 +325,25 @@
+@@ -318,14 +331,25 @@
              try: validate_file(path,name)
              except Exception as exc: raise ValueError(f'{name}：{exc}') from exc
              metadata.append((uuid.uuid4().hex,OWNER,name,digest.hexdigest(),size,str(path)))
@@ -267,7 +259,7 @@
          committed=True
          return {'taskId':ident,'status':'queued'}
      except ValueError as exc:
-@@ -330,55 +353,65 @@
+@@ -335,60 +359,71 @@
              for path in written: path.unlink(missing_ok=True)
          for upload in files: upload.file.close()
  
@@ -343,24 +335,32 @@
 -@app.post('/api/generation-tasks/{ident}/retry',status_code=202)
 +@routes.post('/api/generation-tasks/{ident}/retry',status_code=202)
  def retry(ident: str):
-     job,library_id=task(ident)
-     if job['state'] in ('queued','running'): raise HTTPException(409,'任务仍在执行')
-@@ -387,8 +420,9 @@
-             questionCount=job['request']['questionCount'],topic=job['request']['examTopic']))
-     new=uuid.uuid4().hex;now=time.time()
-     request={**job['request'],'points':[]}
+     job, library_id = task(ident)
+     if job['state'] in ('queued', 'running'):
+         raise HTTPException(409, '任务仍在执行')
 -    with store.db() as db:
--        db.execute('BEGIN IMMEDIATE')
-+    with request_store().db() as db:
-+        db.execute('BEGIN IMMEDIATE')
-+        request_store().check_submission(db)
-         require_active_library(db,library_id)
-         removed=removed_items(db,library_id)
-         if any(('source',file_id) in removed for file_id in request.get('fileIds',[])):
-@@ -396,3 +430,5 @@
-         db.execute("INSERT INTO jobs(id,owner,state,stage,request,result,error,created,updated) VALUES(?,?,'queued','等待处理',?,'{}','',?,?)",(new,OWNER,json.dumps(request,ensure_ascii=False),now,now))
-         db.execute('INSERT INTO web_tasks VALUES(?,?)',(new,library_id))
-     return {'taskId':new,'status':'queued'}
++    target_store = request_store()
++    with target_store.db() as db:
+         db.execute('BEGIN IMMEDIATE')
+         require_active_library(db, library_id)
+         existing = db.execute('''SELECT j.id, j.state FROM web_task_retries r JOIN jobs j ON j.id=r.retry_id
+@@ -396,9 +431,10 @@
+         if existing:
+             return {'taskId': existing['id'], 'status': existing['state']}
+ 
++        target_store.check_submission(db)
+         request = {**job['request'], 'points': []}
+         if request.get('examTopic'):
+-            response = insert_exam_practice(db, store, ExamPracticeInput(
++            response = insert_exam_practice(db, target_store, ExamPracticeInput(
+                 libraryId=library_id, libraryName=request['libraryName'],
+                 questionCount=request['questionCount'], topic=request['examTopic']))
+         else:
+@@ -414,3 +450,6 @@
+             response = {'taskId': new, 'status': 'queued'}
+         db.execute('INSERT INTO web_task_retries VALUES(?,?)', (ident, response['taskId']))
+         return response
++
 +
 +app.include_router(routes)
 --- a/backend/web_content.py
