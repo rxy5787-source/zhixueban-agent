@@ -1,11 +1,13 @@
 import concurrent.futures
 from pathlib import Path
 import time
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from requests import ReadTimeout
 
 from backend import web_api
+from backend import web_question_review
 from backend.web_trial import COOKIE_LIFETIME, MAX_JOBS_PER_SPACE, MAX_LIBRARIES_PER_SPACE, create_app
 from backend.web_trial import TrialStore
 from backend.worker import Runner
@@ -303,13 +305,14 @@ def test_disconnected_upload_returns_response_without_creating_task():
     asyncio.run(exercise())
 
 
-def submit_recovery_task(browser, library='recovery'):
+def submit_recovery_task(browser, library='recovery', *, filename='sql.txt', request_id=None):
     browser.get('/')
     material = Path(__file__).resolve().parents[1] / 'test-materials' / 'SQL短文本资料.txt'
     response = browser.post('/api/generation-tasks', headers={'Origin': ORIGIN},
-                            files={'files': ('sql.txt', material.read_bytes())},
+                            files={'files': (filename, material.read_bytes())},
                             data={'libraryId': library, 'libraryName': 'SQL',
-                                  'requirements': '生成一道考查 WHERE 的单选题', 'questionCount': 1})
+                                  'requirements': '生成一道考查 WHERE 的单选题', 'questionCount': 1,
+                                  'clientRequestId': request_id or uuid4().hex})
     assert response.status_code == 202, response.text
     return response.json()['taskId']
 
@@ -317,6 +320,72 @@ def submit_recovery_task(browser, library='recovery'):
 def browser_store(tmp_path, browser):
     space = browser.cookies[COOKIE].split('.')[0]
     return TrialStore(tmp_path / 'data' / 'spaces' / space)
+
+
+def test_uploaded_material_questions_and_practice_are_isolated(tmp_path, monkeypatch):
+    import generate_from_file
+
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
+    monkeypatch.setattr(generate_from_file, 'generate_questions', lambda *args, **kwargs: [{
+        'question': 'SQL 查询要在分组前筛选原始数据行，应使用哪个子句？',
+        'options': {'A': 'WHERE', 'B': 'HAVING', 'C': 'ORDER BY', 'D': 'GROUP BY'},
+        'answer': 'A', 'difficulty': '简单', 'knowledgePoint': 'WHERE',
+        'explanation': 'WHERE 按条件筛选原始数据行。'
+    }])
+
+    def accept_fixture(candidates, *_):
+        return [dict(candidate, evidenceQuote=candidate['explanation'],
+                     reviewStatus='auto_prechecked', reviewModel='test-fixture')
+                for candidate in candidates], []
+
+    monkeypatch.setattr(web_question_review, 'validate_questions', accept_fixture)
+    app = app_at(tmp_path)
+    headers = {'Origin': ORIGIN}
+    library = 'shared-slug'
+    visitors = [client(app), client(app)]
+    records = []
+    for browser, filename in zip(visitors, ('visitor-a.txt', 'visitor-b.txt')):
+        receipt = uuid4().hex
+        ident = submit_recovery_task(browser, library, filename=filename, request_id=receipt)
+        store = browser_store(tmp_path, browser)
+        Runner(store).run(store.claim())
+        path = f'/api/generation-tasks/{ident}'
+        status = browser.get(path).json()
+        assert status['status'] == 'succeeded', status
+        assert status['savedQuestionCount'] == 1
+        question = browser.get(path + '/questions').json()['questions'][0]
+        answer = {'sessionId': str(uuid4()),
+                  'answers': [{'questionId': question['id'], 'answer': question['answer']}]}
+        report = browser.post(path + '/practice-sessions', headers=headers, json=answer)
+        assert report.status_code == 200, report.text
+        assert report.json()['correct'] == 1
+        records.append((ident, receipt, filename, question['ai']['sourceFileId'], answer))
+
+    assert records[0][3] != records[1][3]
+    for i, browser in enumerate(visitors):
+        ident, receipt, filename, source, answer = records[i]
+        foreign, foreign_receipt, _, foreign_source, foreign_answer = records[1 - i]
+        path = f'/api/generation-tasks/{foreign}'
+        assert browser.get(path).status_code == 404
+        assert browser.get(path + '/questions').status_code == 404
+        assert browser.get(f'/api/generation-submissions/{receipt}').status_code == 200
+        assert browser.get(f'/api/generation-submissions/{foreign_receipt}').status_code == 404
+        assert browser.post(path + '/save', headers=headers).status_code == 404
+        assert browser.post(path + '/practice-sessions', headers=headers, json=foreign_answer).status_code == 404
+        assert browser.post('/api/study-turns', headers=headers, json={
+            'parentId': foreign, 'requestId': str(uuid4()), 'requirement': '继续出题', 'kind': 'single_choice',
+        }).status_code == 404
+        assert browser.delete(f'/api/libraries/{library}/items/source/{foreign_source}',
+                              headers=headers).status_code == 404
+
+        entry = browser.get('/api/libraries').json()['libraries'][0]
+        assert [item['id'] for item in entry['sources']] == [source]
+        assert entry['sources'][0]['name'] == filename
+        assert [item['taskId'] for item in entry['questionSets']] == [ident]
+        assert [task['taskId'] for task in browser.get('/api/generation-tasks').json()['tasks']] == [ident]
+        history = browser.get(f'/api/practice-history?libraryId={library}').json()
+        assert [session['sessionId'] for session in history['sessions']] == [answer['sessionId']]
+        assert [point['observations'] for point in history['points']] == [1]
 
 
 def test_generation_recovers_queued_and_running_jobs_after_restart(tmp_path, monkeypatch):
