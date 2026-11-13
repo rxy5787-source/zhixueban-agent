@@ -13,7 +13,7 @@
  ROOT = Path(os.getenv('AI_WEB_DATA_DIR', str(config.ROOT / 'runtime' / 'web'))).resolve()
  store = WebStore(ROOT)
  runner = Runner(store)
-@@ -49,6 +49,7 @@
+@@ -50,6 +50,7 @@
          ''')
          web_practice.init_tables(db)
          web_submissions.init_tables(db)
@@ -21,7 +21,7 @@
  init_web_tables()
  
  @asynccontextmanager
-@@ -88,6 +89,7 @@
+@@ -89,6 +90,7 @@
      with request_store().db() as db:
          events=[dict(row) for row in db.execute('SELECT stage,state,created FROM job_events WHERE job_id=? ORDER BY id',(job['id'],))]
          saved_ids={row['question_id'] for row in db.execute('SELECT question_id FROM web_questions WHERE library_id=?',(library_id,))}
@@ -29,7 +29,7 @@
          archived=is_library_deleted(db,library_id)
          removed=removed_items(db,library_id)
          library=db.execute('SELECT title FROM web_libraries WHERE id=?',(library_id,)).fetchone()
-@@ -107,6 +109,7 @@
+@@ -108,6 +110,7 @@
              'events':phase_events,'generatedQuestionCount':len(candidates(job)) if exam_info else sum(f.get('generatedCandidates',0) for f in job['result'].get('files',[])),
              'acceptedQuestionCount':len(available),'requestedQuestionCount':job['request']['questionCount'],
              'availableQuestions':available,
@@ -37,7 +37,7 @@
              'examPractice':exam_info,
              'libraryDeleted':archived,
              'removedSet':('set',job['id']) in removed,
-@@ -188,6 +191,10 @@
+@@ -189,6 +192,10 @@
      return {'id':ident}
  
  def item_label(db,library_id,kind,ident):
@@ -48,7 +48,7 @@
      if kind=='source':
          row=db.execute("""SELECT f.name,MAX(j.state IN ('queued','running')) AS busy
              FROM web_tasks AS t JOIN jobs AS j ON j.id=t.task_id
-@@ -255,7 +262,8 @@
+@@ -256,7 +263,8 @@
                  question_set=sets.setdefault(ident,{'id':ident,'taskId':ident,'count':0,
                      'examPractice':item['ai'].get('reviewMethod')==exam_practice.METHOD})
                  question_set['count']+=1
@@ -58,7 +58,7 @@
      return {'libraries':result,'deletedLibraries':deleted,'removedItems':removed}
  
  @routes.get('/api/generation-tasks')
-@@ -295,13 +303,18 @@
+@@ -301,13 +309,18 @@
  def create_task(files: list[UploadFile]=File(...),requirements: str=Form(''),libraryId: str=Form(...),
                  libraryName: str=Form(...),questionCount: int=Form(3,ge=1,le=12),questionType: str=Form('single_choice'),
                  clientRequestId: str=Form('',pattern=r'^(?:[0-9a-f]{32})?$')):
@@ -79,7 +79,7 @@
      except ValidationError as exc:
          message='；'.join(error['msg'].removeprefix('Value error, ') for error in exc.errors())
          raise HTTPException(422,message)
-@@ -339,8 +352,10 @@
+@@ -345,8 +358,10 @@
                      return previous
              request_store().check_submission(db)
              parsed.libraryName=resolve_library(db,libraryId,parsed.libraryName,now)
@@ -91,12 +91,6 @@
              db.execute('INSERT INTO web_tasks VALUES(?,?)',(ident,libraryId))
              if clientRequestId:
                  db.execute('INSERT INTO web_submissions VALUES(?,?,?)', (clientRequestId, ident, fingerprint))
-@@ -431,4 +446,5 @@
-         db.execute('INSERT INTO web_tasks VALUES(?,?)',(new,library_id))
-     return {'taskId':new,'status':'queued'}
- 
-+routes.include_router(study_chat.router)
- app.include_router(routes)
 --- a/backend/worker.py
 +++ b/backend/worker.py
 @@ -44,6 +44,9 @@

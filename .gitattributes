@@ -1,1 +1,1 @@
-/web-prototype/deploy/*.patch text eol=lf
+/web-prototype/deploy/*.patch text eol=lf whitespace=-blank-at-eol

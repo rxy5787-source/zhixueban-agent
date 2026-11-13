@@ -38,6 +38,7 @@ def init_web_tables():
         CREATE TABLE IF NOT EXISTS web_removed_items(library_id TEXT NOT NULL,kind TEXT NOT NULL,item_id TEXT NOT NULL,
             label TEXT NOT NULL,removed REAL NOT NULL,PRIMARY KEY(library_id,kind,item_id));
         CREATE TABLE IF NOT EXISTS web_tasks(task_id TEXT PRIMARY KEY,library_id TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS web_task_retries(original_id TEXT PRIMARY KEY,retry_id TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS web_questions(question_id TEXT NOT NULL,library_id TEXT NOT NULL,task_id TEXT NOT NULL,payload TEXT NOT NULL,saved REAL NOT NULL,PRIMARY KEY(library_id,question_id));
         ''')
         web_practice.init_tables(db)
@@ -264,22 +265,26 @@ def recent_tasks():
 
 @app.post('/api/exam-practice-tasks',status_code=201)
 def create_exam_practice(value: ExamPracticeInput):
+    with store.db() as db:
+        db.execute('BEGIN IMMEDIATE')
+        return insert_exam_practice(db, store, value)
+
+
+def insert_exam_practice(db, target_store, value):
     ident=uuid.uuid4().hex
     start=time.time()
     accepted,points=exam_practice.generate(value.questionCount,value.topic,ident)
-    with store.db() as db:
-        db.execute('BEGIN IMMEDIATE')
-        title=resolve_library(db,value.libraryId,value.libraryName,start)
-        request={'fileIds':[],'libraryName':title,'subject':'软件设计师计算专项','points':points,
-                 'questionCount':value.questionCount,'examTopic':value.topic}
-        job={'id':ident,'owner':OWNER,'request':request}
-        result=result_bundle(store.service_id,job,accepted,[],[])
-        result['reviewNote']='按软件设计师公开考试范围编写的原创模拟题。题干参数、唯一答案与逐步解析由程序计算。'
-        db.execute('''INSERT INTO jobs(id,owner,state,stage,request,result,error,created,updated)
-            VALUES(?,?,'succeeded','专项题已生成',?,?,'',?,?)''',(ident,OWNER,json.dumps(request,ensure_ascii=False),
-                json.dumps(result,ensure_ascii=False),start,time.time()))
-        db.execute('INSERT INTO web_tasks VALUES(?,?)',(ident,value.libraryId))
-        store.publish_result(db, ident, 'succeeded', result, start)
+    title=resolve_library(db,value.libraryId,value.libraryName,start)
+    request={'fileIds':[],'libraryName':title,'subject':'软件设计师计算专项','points':points,
+             'questionCount':value.questionCount,'examTopic':value.topic}
+    job={'id':ident,'owner':OWNER,'request':request}
+    result=result_bundle(target_store.service_id,job,accepted,[],[])
+    result['reviewNote']='按软件设计师公开考试范围编写的原创模拟题。题干参数、唯一答案与逐步解析由程序计算。'
+    db.execute('''INSERT INTO jobs(id,owner,state,stage,request,result,error,created,updated)
+        VALUES(?,?,'succeeded','专项题已生成',?,?,'',?,?)''',(ident,OWNER,json.dumps(request,ensure_ascii=False),
+            json.dumps(result,ensure_ascii=False),start,time.time()))
+    db.execute('INSERT INTO web_tasks VALUES(?,?)',(ident,value.libraryId))
+    target_store.publish_result(db, ident, 'succeeded', result, start)
     return {'taskId':ident,'status':'succeeded'}
 
 @app.post('/api/generation-tasks',status_code=202)
@@ -380,19 +385,32 @@ def cancel_task(ident: str):
 
 @app.post('/api/generation-tasks/{ident}/retry',status_code=202)
 def retry(ident: str):
-    job,library_id=task(ident)
-    if job['state'] in ('queued','running'): raise HTTPException(409,'任务仍在执行')
-    if job['request'].get('examTopic'):
-        return create_exam_practice(ExamPracticeInput(libraryId=library_id,libraryName=job['request']['libraryName'],
-            questionCount=job['request']['questionCount'],topic=job['request']['examTopic']))
-    new=uuid.uuid4().hex;now=time.time()
-    request={**job['request'],'points':[]}
+    job, library_id = task(ident)
+    if job['state'] in ('queued', 'running'):
+        raise HTTPException(409, '任务仍在执行')
     with store.db() as db:
         db.execute('BEGIN IMMEDIATE')
-        require_active_library(db,library_id)
-        removed=removed_items(db,library_id)
-        if any(('source',file_id) in removed for file_id in request.get('fileIds',[])):
-            raise HTTPException(409,'任务的原始资料已移入回收站，请恢复资料后重试')
-        db.execute("INSERT INTO jobs(id,owner,state,stage,request,result,error,created,updated) VALUES(?,?,'queued','等待处理',?,'{}','',?,?)",(new,OWNER,json.dumps(request,ensure_ascii=False),now,now))
-        db.execute('INSERT INTO web_tasks VALUES(?,?)',(new,library_id))
-    return {'taskId':new,'status':'queued'}
+        require_active_library(db, library_id)
+        existing = db.execute('''SELECT j.id, j.state FROM web_task_retries r JOIN jobs j ON j.id=r.retry_id
+                                 WHERE r.original_id=?''', (ident,)).fetchone()
+        if existing:
+            return {'taskId': existing['id'], 'status': existing['state']}
+
+        request = {**job['request'], 'points': []}
+        if request.get('examTopic'):
+            response = insert_exam_practice(db, store, ExamPracticeInput(
+                libraryId=library_id, libraryName=request['libraryName'],
+                questionCount=request['questionCount'], topic=request['examTopic']))
+        else:
+            removed = removed_items(db, library_id)
+            if any(('source', file_id) in removed for file_id in request.get('fileIds', [])):
+                raise HTTPException(409, '任务的原始资料已移入回收站，请恢复资料后重试')
+            new = uuid.uuid4().hex
+            now = time.time()
+            db.execute("""INSERT INTO jobs(id,owner,state,stage,request,result,error,created,updated)
+                          VALUES(?,?,'queued','等待处理',?,'{}','',?,?)""",
+                       (new, OWNER, json.dumps(request, ensure_ascii=False), now, now))
+            db.execute('INSERT INTO web_tasks VALUES(?,?)', (new, library_id))
+            response = {'taskId': new, 'status': 'queued'}
+        db.execute('INSERT INTO web_task_retries VALUES(?,?)', (ident, response['taskId']))
+        return response

@@ -3,6 +3,7 @@ import multiprocessing
 import threading
 import time
 from pathlib import Path
+from requests import Timeout
 from . import config
 from .content_exporter import result_bundle
 from .file_storage import validate_file
@@ -70,7 +71,11 @@ class Runner:
             if process.pid is not None:
                 if process.is_alive():process.terminate();process.join(timeout=2)
                 if not process.is_alive():process.close()
-    def cancelled(self,job):return self.stop.is_set() or self.store.get(job['id'])['cancel']
+    def cancelled(self,job):
+        if self.stop.is_set():
+            return True
+        current = self.store.get(job['id'])
+        return current['cancel'] or current['state'] in ('interrupted', 'cancelled')
     def run(self,job):
         import generate_from_file as generator
         import automatic_question_validator as validator
@@ -178,6 +183,9 @@ class Runner:
                                 if passed:checkpoint(f'初筛通过 · 已有 {len(accepted)} 道题可练习')
                                 feedback=json.dumps([{'reasons':row['reasons']} for row in bad[:3]],ensure_ascii=False)[:1000]
                                 if section.get('requiresVisual',False) or section['visualAssisted']:break
+                        except Timeout:
+                            rejected.append({'sourceFile':source['name'],'sourceLocation':section['location'],
+                                             'reasons':['等待本机模型响应超时，请稍后重试。']})
                         except Exception as exc:rejected.append({'sourceFile':source['name'],'sourceLocation':section['location'],'reasons':[f'本段处理失败：{exc}']})
                         checkpoint('已保存分段结果')
                     if len(accepted)>=job['request']['questionCount'] or file_parts>=config.MAX_PARTS or parts>=12:break

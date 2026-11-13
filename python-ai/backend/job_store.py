@@ -54,7 +54,7 @@ class Store:
         for key in ('request','result'):value[key]=json.loads(value[key])
         return value
     def update_request(self, ident, request):
-        with self.db() as db:db.execute('UPDATE jobs SET request=?,updated=? WHERE id=?',(json.dumps(request,ensure_ascii=False),time.time(),ident))
+        with self.db() as db:db.execute("UPDATE jobs SET request=?,updated=? WHERE id=? AND state='running'",(json.dumps(request,ensure_ascii=False),time.time(),ident))
     def claim(self):
         with self.db() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -69,10 +69,17 @@ class Store:
     def update(self, ident, state, stage, result=None, error=''):
         with self.db() as db:
             now=time.time()
+            # A child that survives a server crash must not overwrite recovery.
+            condition = "WHERE id=? AND state NOT IN ('interrupted','cancelled')"
             if result is None:
-                db.execute("UPDATE jobs SET state=?,stage=?,error=?,updated=? WHERE id=?",(state,stage,error,now,ident))
+                updated = db.execute("UPDATE jobs SET state=?,stage=?,error=?,updated=? " + condition,
+                                     (state,stage,error,now,ident))
             else:
-                db.execute("UPDATE jobs SET state=?,stage=?,result=?,error=?,updated=? WHERE id=?",(state,stage,json.dumps(result,ensure_ascii=False),error,now,ident))
+                updated = db.execute("UPDATE jobs SET state=?,stage=?,result=?,error=?,updated=? " + condition,
+                                     (state,stage,json.dumps(result,ensure_ascii=False),error,now,ident))
+            if not updated.rowcount:
+                return
+            if result is not None:
                 self.publish_result(db,ident,state,result,now)
             db.execute('INSERT INTO job_events(job_id,state,stage,created) VALUES(?,?,?,?)',(ident,state,stage,now))
     def publish_result(self, db, ident, state, result, now):
@@ -82,4 +89,9 @@ class Store:
             db.execute("UPDATE jobs SET cancel=1,stage=CASE WHEN state='queued' THEN '已取消' ELSE '正在取消，已保存结果会保留' END,state=CASE WHEN state='queued' THEN 'cancelled' ELSE state END,updated=? WHERE id=? AND owner=? AND state IN ('queued','running')",(time.time(),ident,owner))
     def recover(self):
         with self.db() as db:
-            db.execute("UPDATE jobs SET state='interrupted',stage='服务重启，任务已中断，可重试',error='任务中断，已完成结果仍保留' WHERE state='running'")
+            db.execute("""UPDATE jobs
+                SET state=CASE WHEN cancel=1 THEN 'cancelled' ELSE 'interrupted' END,
+                    stage=CASE WHEN cancel=1 THEN '已取消，已保存结果保留' ELSE '服务重启，任务已中断，可重试' END,
+                    error=CASE WHEN cancel=1 THEN '' ELSE '任务中断，已完成结果仍保留' END,
+                    updated=?
+                WHERE state='running'""", (time.time(),))
