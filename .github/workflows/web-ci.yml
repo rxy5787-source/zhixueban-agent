@@ -45,6 +45,12 @@ jobs:
           python -m pip install -r python-ai/requirements.txt
           python -m pip check
 
+      - name: Run Agent runtime and learning Skill planner tests
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "python-ai"
+          python -m pytest -q python-ai/test_agent_runtime.py python-ai/test_weak_points_skill.py python-ai/test_study_skill_planner.py
+
       - name: Package backend and run API tests
         shell: pwsh
         run: |
