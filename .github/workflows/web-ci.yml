@@ -45,6 +45,12 @@ jobs:
           python -m pip install -r python-ai/requirements.txt
           python -m pip check
 
+      - name: Run bounded Agent skill tests (no model required)
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "python-ai"
+          python -m pytest -q python-ai/test_agent_runtime.py
+
       - name: Package backend and run API tests
         shell: pwsh
         run: |
