@@ -45,6 +45,12 @@ jobs:
           python -m pip install -r python-ai/requirements.txt
           python -m pip check
 
+      - name: Test weak-point Skill (no model required)
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "python-ai"
+          python -m pytest -q python-ai/test_weak_points_skill.py
+
       - name: Package backend and run API tests
         shell: pwsh
         run: |
