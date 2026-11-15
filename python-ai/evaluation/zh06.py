@@ -68,6 +68,23 @@ def load_cases(path: Path = SUITE) -> list[dict]:
     return cases
 
 
+def case_prompt(case: dict) -> str:
+    """Turn the existing evaluation requirement into a direct learner request.
+
+    Keep the checklist text unchanged in the case manifest; case 20 is the
+    negative-control question, not an instruction to tell the model to refuse.
+    """
+    if case["negative"]:
+        return "请仅依据我上传的SQL学习资料，说明TCP三次握手过程中序号如何变化，并标出直接支持回答的资料依据。"
+    prefix = {
+        "mnemonic": "请根据资料编写一条便于回忆的记忆口诀：",
+        "reply": "请仅依据资料解答以下问题：",
+        "cloze": "请根据资料生成一道填空练习：",
+        "single_choice": "请根据资料生成一道四选一单选题：",
+    }[case["kind"]]
+    return prefix + case["requirement"]
+
+
 def select_cases(cases: list[dict], value: str) -> list[dict]:
     if value == "all":
         return cases
@@ -153,6 +170,7 @@ def run_live(args, cases) -> None:
             "expectedNegative": case["negative"], "requirement": case["requirement"],
             "sourceName": source.name,
             "sourceSha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "requestSent": case_prompt(case),
             "runStartedUtc": started_at, "taskId": None,
             "runStatus": "not_submitted", "modelCallCount": None, "task": None,
         }
@@ -163,7 +181,7 @@ def run_live(args, cases) -> None:
                     origin + "/api/generation-tasks",
                     data={
                         "libraryId": library, "libraryName": "ZH-06 " + group,
-                        "requirements": case["requirement"], "questionCount": "1",
+                        "requirements": case_prompt(case), "questionCount": "1",
                         "questionType": case["kind"],
                         "clientRequestId": uuid.uuid4().hex,
                     },
