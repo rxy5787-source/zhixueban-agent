@@ -62,7 +62,8 @@ def _job_metrics(db, row) -> dict:
                 reasons_by_category["unspecified"] += 1
                 continue
             category = item.get("status")
-            reasons_by_category[category if category in REJECTION_CATEGORIES else "unspecified"] += 1
+            safe_category = category if isinstance(category, str) and category in REJECTION_CATEGORIES else "unspecified"
+            reasons_by_category[safe_category] += 1
 
     events = db.execute(
         "SELECT state,stage,created FROM job_events WHERE job_id=? ORDER BY id",
