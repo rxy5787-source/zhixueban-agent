@@ -17,26 +17,28 @@ from .study_skill_planner import StudyPlan, plan_study_from_progress
 _LIBRARY_ID = re.compile(r"[A-Za-z0-9_-]{1,100}\Z")
 
 
+def require_study_library(db: sqlite3.Connection, library_id: str) -> None:
+    """Fail closed for invalid, absent, or deleted libraries in this space."""
+    if not isinstance(library_id, str) or not _LIBRARY_ID.fullmatch(library_id):
+        raise HTTPException(422, "知识库ID格式无效")
+    visible = db.execute(
+        """SELECT 1 FROM web_libraries
+           WHERE id=? AND NOT EXISTS (
+             SELECT 1 FROM web_deleted_libraries WHERE library_id=?
+           )""",
+        (library_id, library_id),
+    ).fetchone()
+    if visible is None:
+        raise HTTPException(404, "知识库不存在")
+
+
 def plan_for_library(db: sqlite3.Connection, library_id: str) -> StudyPlan:
     """Read existing BKT progress; do not generate questions or change records.
 
     The HTTP session handler must obtain `db` from the authenticated browser's
     TrialStore. Never open a path or store selected by the request body or LLM.
     """
-    if not isinstance(library_id, str) or not _LIBRARY_ID.fullmatch(library_id):
-        raise HTTPException(422, "知识库ID格式无效")
-
-    visible = db.execute(
-        """SELECT 1 FROM web_libraries
-           WHERE id = ?
-           AND NOT EXISTS (
-             SELECT 1 FROM web_deleted_libraries WHERE library_id = ?
-           )""",
-        (library_id, library_id),
-    ).fetchone()
-    if visible is None:
-        # Do not distinguish missing and removed libraries.
-        raise HTTPException(404, "知识库不存在")
+    require_study_library(db, library_id)
 
     progress = web_practice.history(db, library_id)["points"]
     try:
