@@ -22,3 +22,6 @@
 **/*.key
 /local.properties
 /phone-services.local.properties
+
+# Local ZH-06 artifacts may contain uploaded source excerpts and model outputs.
+/artifacts/zh06-eval/
