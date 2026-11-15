@@ -25,7 +25,8 @@ from .web_api import WebStore, init_web_tables, request_store_override, routes
 from .worker import Runner
 from .trial_body_limit import RequestBodyLimit
 from . import resumable_uploads
-from .study_plan_service import plan_for_library
+from .study_practice_executor import ConfirmedPractice, dispatch_confirmed_practice, ensure_execution_tables, study_proposal
+from .model_status import generation_readiness
 
 
 LOGGER = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ class TrialSpaces:
         init_web_tables(store)
         with store.db() as db:
             resumable_uploads.init_tables(db)
+            ensure_execution_tables(db)
             db.executescript(f'''
                 CREATE TRIGGER IF NOT EXISTS limit_trial_libraries
                 BEFORE INSERT ON web_libraries
@@ -296,8 +298,17 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
         if current_store is None:
             raise HTTPException(401, '浏览器会话已失效')
         with current_store.db() as db:
-            result = plan_for_library(db, library_id)
-        return result.model_dump()
+            return study_proposal(db, library_id)
+
+    @app.post('/api/study-plans/{library_id}/execute', status_code=202)
+    def execute_study_plan(library_id: str, payload: ConfirmedPractice, request: Request):
+        # A POST from the verified study space is an explicit execution request.
+        ident = existing_space(request)
+        if ident is None or spaces.get(ident) is None:
+            raise HTTPException(401, '请先建立浏览器会话')
+        return dispatch_confirmed_practice(
+            spaces.get(ident), library_id, payload, generation_readiness,
+        )
 
     @app.get('/favicon.svg')
     def favicon():

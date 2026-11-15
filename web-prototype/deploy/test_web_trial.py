@@ -112,6 +112,132 @@ def test_study_plan_rejects_invalid_persisted_progress(tmp_path):
     assert '学习进度' in result.json()['detail']
 
 
+
+def test_study_executor_reuses_verified_source_and_queues_once(tmp_path, monkeypatch):
+    from backend import web_trial
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
+    monkeypatch.setattr(web_trial, 'generation_readiness', lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    browser = client(app)
+    browser.get('/')
+    headers = {'Origin': ORIGIN}
+    original = submit_recovery_task(browser, library='study')
+    store = browser_store(tmp_path, browser)
+    store.update(original, 'failed', '测试源文件任务已结束', error='测试环境不运行模型')
+    with store.db() as db:
+        db.execute('''INSERT INTO web_point_progress
+            (library_id, point_key, label, mastery, attempts, correct)
+            VALUES ('study', 'having', 'HAVING', 0.28, 4, 1)''')
+    proposal = browser.get('/api/study-plans/study').json()
+    assert proposal['next_action'] == 'prepare_targeted_practice'
+    assert len(proposal['sourceFiles']) == 1
+    body = {'revision': proposal['revision'],
+            'sourceFileId': proposal['sourceFiles'][0]['id'],
+            'clientRequestId': 'a' * 32, 'questionCount': 2}
+    first = browser.post('/api/study-plans/study/execute', headers=headers, json=body)
+    assert first.status_code == 202, first.text
+    assert first.json()['status'] == 'queued'
+    assert first.json()['reused'] is False
+    retry = browser.post('/api/study-plans/study/execute', headers=headers, json=body)
+    assert retry.status_code == 202
+    assert retry.json()['taskId'] == first.json()['taskId']
+    assert retry.json()['reused'] is True
+    with store.db() as db:
+        record = db.execute('SELECT * FROM jobs WHERE id=?', (first.json()['taskId'],)).fetchone()
+        request = __import__('json').loads(record['request'])
+        assert request['fileIds'] == [body['sourceFileId']]
+        assert request['questionCount'] == 2
+        assert 'HAVING' in request['requirements']
+        assert request['requireModelGeneration'] is True
+        assert db.execute('SELECT COUNT(*) FROM study_practice_dispatches').fetchone()[0] == 1
+        assert db.execute('SELECT attempts,correct,mastery FROM web_point_progress WHERE library_id=?', ('study',)).fetchone()['mastery'] == 0.28
+
+
+def test_study_executor_denies_other_space_and_removed_source(tmp_path, monkeypatch):
+    from backend import web_trial
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
+    monkeypatch.setattr(web_trial, 'generation_readiness', lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    alice, bob = client(app), client(app)
+    alice.get('/')
+    bob.get('/')
+    headers = {'Origin': ORIGIN}
+    original = submit_recovery_task(alice, library='alice')
+    browser_store(tmp_path, alice).update(original, 'failed', '测试结束')
+    proposal = alice.get('/api/study-plans/alice').json()
+    body = {'revision': proposal['revision'],
+            'sourceFileId': proposal['sourceFiles'][0]['id'],
+            'clientRequestId': 'b' * 32, 'questionCount': 1}
+    assert bob.post('/api/study-plans/alice/execute', headers=headers, json=body).status_code == 404
+    assert alice.post('/api/study-plans/alice/execute', json=body).status_code == 403
+    assert alice.post('/api/study-plans/alice/execute', headers=headers,
+                      json={**body, 'questionCount': 0}).status_code == 422
+    assert alice.post('/api/study-plans/alice/execute', headers=headers,
+                      json={**body, 'sourceFileId': 'c' * 32}).status_code == 404
+    remove = alice.delete(
+        '/api/libraries/alice/items/source/' + body['sourceFileId'],
+        headers=headers,
+    )
+    assert remove.status_code == 200, remove.text
+    assert alice.post('/api/study-plans/alice/execute', headers=headers, json=body).status_code == 404
+
+
+def test_study_executor_prevents_stale_plan_and_reused_id_changes(tmp_path, monkeypatch):
+    from backend import web_trial
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
+    monkeypatch.setattr(web_trial, 'generation_readiness', lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    browser = client(app)
+    browser.get('/')
+    headers = {'Origin': ORIGIN}
+    task_id = submit_recovery_task(browser, library='study')
+    store = browser_store(tmp_path, browser)
+    store.update(task_id, 'failed', '测试结束')
+    proposal = browser.get('/api/study-plans/study').json()
+    payload = {'revision': proposal['revision'], 'sourceFileId': proposal['sourceFiles'][0]['id'],
+               'clientRequestId': 'd' * 32, 'questionCount': 1}
+    with store.db() as db:
+        db.execute('''INSERT INTO web_point_progress
+            (library_id, point_key, label, mastery, attempts, correct)
+            VALUES ('study', 'where', 'WHERE', 0.38, 3, 1)''')
+    stale = browser.post('/api/study-plans/study/execute', headers=headers, json=payload)
+    assert stale.status_code == 409
+    new_proposal = browser.get('/api/study-plans/study').json()
+    payload['revision'] = new_proposal['revision']
+    executed = browser.post('/api/study-plans/study/execute', headers=headers, json=payload)
+    assert executed.status_code == 202, executed.text
+    assert browser.post('/api/study-plans/study/execute', headers=headers,
+                        json={**payload, 'questionCount': 2}).status_code == 409
+    assert browser.get('/api/study-plans/study').json()['next_action'] == 'prepare_targeted_practice'
+
+
+def test_study_executor_requires_original_file_and_model_readiness(tmp_path, monkeypatch):
+    from backend import web_trial
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    browser = client(app)
+    browser.get('/')
+    headers = {'Origin': ORIGIN}
+    task_id = submit_recovery_task(browser, library='study')
+    store = browser_store(tmp_path, browser)
+    store.update(task_id, 'failed', '测试结束')
+    proposal = browser.get('/api/study-plans/study').json()
+    payload = {'revision': proposal['revision'], 'sourceFileId': proposal['sourceFiles'][0]['id'],
+               'clientRequestId': 'e' * 32, 'questionCount': 1}
+    monkeypatch.setattr(web_trial, 'generation_readiness',
+                        lambda: {'generationReady': False, 'generationIssue': '模型尚未启动'})
+    unavailable = browser.post('/api/study-plans/study/execute', headers=headers, json=payload)
+    assert unavailable.status_code == 503
+    assert '模型尚未启动' in unavailable.text
+    monkeypatch.setattr(web_trial, 'generation_readiness', lambda: {'generationReady': True})
+    source = store.file(payload['sourceFileId'], 'web-local')
+    Path(source['path']).unlink()
+    response = browser.post('/api/study-plans/study/execute', headers=headers, json=payload)
+    assert response.status_code == 409
+    with store.db() as db:
+        assert db.execute('SELECT COUNT(*) FROM study_practice_dispatches').fetchone()[0] == 0
+
+
 def test_sessions_are_isolated_and_survive_restart(tmp_path):
     app = app_at(tmp_path)
     first, second = client(app), client(app)

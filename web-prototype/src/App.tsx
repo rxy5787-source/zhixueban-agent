@@ -24,6 +24,12 @@ import handbookBook from './assets/handbook/brand-book.svg'
 import handbookClock from './assets/handbook/clock.svg'
 
 type Route = { destination: Destination; libraryId?: string; taskId?: string; practicing?: boolean }
+type StudyProposal = {
+  next_action: 'prepare_diagnostic' | 'prepare_targeted_practice' | 'prepare_review'
+  topics: string[]
+  revision: string
+  sourceFiles: { id: string; name: string }[]
+}
 const UPLOAD_DRAFT_KEY = 'zhixue-upload-draft'
 function uploadDraft(): { libraryId: string; requirements: string } | null {
   try {
@@ -125,6 +131,14 @@ export function App() {
   const historyPath=panel?.type==='analysis' || panel?.type==='records'
     ? `/api/practice-history${panel.libraryId ? `?libraryId=${encodeURIComponent(panel.libraryId)}` : ''}` : ''
   const currentHistory=practiceHistory?.path===historyPath ? practiceHistory : null
+  const planPath=panel?.type==='analysis' && panel.libraryId ? `/api/study-plans/${encodeURIComponent(panel.libraryId)}` : ''
+  const [studyPlan,setStudyPlan] = useState<{path:string;data?:StudyProposal;error?:string} | null>(null)
+  const currentPlan=studyPlan?.path===planPath ? studyPlan : null
+  const [planSourceId,setPlanSourceId] = useState('')
+  const [executingPlan,setExecutingPlan] = useState(false)
+  const [executeError,setExecuteError] = useState('')
+  const [planCount,setPlanCount] = useState(3)
+  const [executionDraft,setExecutionDraft] = useState<{signature:string;clientRequestId:string} | null>(null)
   useEffect(()=>{
     if(!historyPath){setPracticeHistory(null);return}
     const controller=new AbortController()
@@ -135,6 +149,19 @@ export function App() {
     })
     return ()=>controller.abort()
   },[historyPath])
+  useEffect(()=>{
+    setExecuteError('')
+    setPlanSourceId('')
+    setExecutionDraft(null)
+    if(!planPath){setStudyPlan(null);return}
+    const controller=new AbortController()
+    api<StudyProposal>(planPath,{signal:controller.signal}).then(data=>{
+      if(!controller.signal.aborted){setStudyPlan({path:planPath,data});setPlanSourceId(data.sourceFiles[0]?.id ?? '')}
+    }).catch(error=>{
+      if(!controller.signal.aborted)setStudyPlan({path:planPath,error:error instanceof Error ? error.message : '无法读取Agent学习计划'})
+    })
+    return ()=>controller.abort()
+  },[planPath])
   const close = useCallback(() => setPanel(null), [])
   useEffect(() => {
     function sync() {
@@ -169,6 +196,26 @@ export function App() {
     setRequirement('根据资料优先生成本知识库的薄弱知识点练习')
     setFeedback('')
     setNotice('请添加相关学习资料，再点击出题。')
+  }
+  async function executePlannedPractice(libraryId:string) {
+    const proposal=currentPlan?.data
+    if(!proposal || !planSourceId || executingPlan)return
+    const signature=[libraryId,proposal.revision,planSourceId,planCount].join(':')
+    const clientRequestId=executionDraft?.signature===signature
+      ? executionDraft.clientRequestId : crypto.randomUUID().replaceAll('-','')
+    setExecutionDraft({signature,clientRequestId})
+    setExecutingPlan(true)
+    setExecuteError('')
+    try {
+      const result=await api<{taskId:string;status:string}>(`/api/study-plans/${encodeURIComponent(libraryId)}/execute`,{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({revision:proposal.revision,sourceFileId:planSourceId,questionCount:planCount,clientRequestId}),
+      })
+      setExecutionDraft(null)
+      openTask(result.taskId)
+      setNotice('已根据学习计划创建出题任务，请在任务页面查看生成与质检结果。')
+    } catch(error) {setExecuteError(error instanceof Error ? error.message : '无法创建练习任务')}
+    finally {setExecutingPlan(false)}
   }
   function resetDemo() {
     setFiles([]); setRequirement(''); setFeedback(''); setNewName(''); setNameError('')
@@ -446,7 +493,33 @@ export function App() {
         {historyPath && currentHistory?.error && <p className="field-error" role="alert">{currentHistory.error}</p>}
         {panel.type === 'records' && currentHistory?.data && <><p className="sheet-description">{panelLibrary ? `${panelLibrary.title} · 最近练习` : '各知识库的最近练习'}</p><div className="example-records">{currentHistory.data.sessions.map(record => <div key={record.sessionId}><Icon name="clock" size={19}/><span><strong>{record.libraryName}</strong><small>{new Date(record.created * 1000).toLocaleString('zh-CN')}</small></span><b>答对 {record.correct}/{record.answered} 题</b><button className="archive-link record-return" onClick={()=>openTask(record.taskId)}>查看题目<Icon name="chevron" size={13}/></button></div>)}</div>{!currentHistory.data.sessions.length && <p className="supporting">完成一组练习后，记录会显示在这里。</p>}</>}
         {panel.type === 'analysis' && currentHistory?.data && <><p className="sheet-description">{panelLibrary?.title} · 根据累计作答估计掌握情况</p><PointProgressList points={currentHistory.data.points}/></>}
-        {panel.type === 'overview' && <><p className="sheet-description">总览入口留在“我的”。具体知识点与学习建议，回到对应知识库查看。</p><div className="overview-libraries">{libraries.map(library => <button key={library.id} onClick={() => { navigate('libraries', library.id) }}><span className={`target-mark cover-${library.color}`}>{library.mark}</span><span><strong>{library.title}</strong><small>进入知识库查看学习分析</small></span><Icon name="chevron" size={16}/></button>)}</div><p className="prototype-note">当前不展示未经计算的掌握概率或整体学习结论。</p></>}
+        {panel.type === 'analysis' && planPath && <section aria-label="Agent复习计划">
+           <h3>Agent复习建议</h3>
+           {!currentPlan && <p className="supporting" role="status">正在读取学习计划…</p>}
+           {currentPlan?.error && <p className="field-error" role="alert">{currentPlan.error}</p>}
+           {currentPlan?.data && <>
+             <p className="supporting">{currentPlan.data.next_action==='prepare_targeted_practice'
+               ? `建议优先练习：${currentPlan.data.topics.join('、')}`
+               : currentPlan.data.next_action==='prepare_diagnostic'
+               ? '练习记录不足，建议先完成基础诊断。' : '目前没有证据充分的薄弱点，建议进行综合复习。'}</p>
+             {currentPlan.data.sourceFiles.length ? <>
+               <p className="supporting">以下资料已经存在于这个知识库。确认后才会创建任务，并沿用原有出题质检流程。</p>
+               <label className="field-label" htmlFor="study-plan-source">用于练习的资料</label>
+               <select id="study-plan-source" className="text-field" value={planSourceId} onChange={event=>{setPlanSourceId(event.target.value);setExecuteError('')}}>
+                 {currentPlan.data.sourceFiles.map(source=><option value={source.id} key={source.id}>{source.name}</option>)}
+               </select>
+               <label className="field-label" htmlFor="study-plan-count">生成题数</label>
+               <select id="study-plan-count" className="text-field" value={planCount} onChange={event=>{setPlanCount(Number(event.target.value));setExecuteError('')}}>
+                 {[1,2,3].map(count=><option key={count} value={count}>{count}道</option>)}
+               </select>
+               {executeError && <p className="field-error" role="alert">{executeError}</p>}
+               <button type="button" className="primary-button" disabled={executingPlan || !planSourceId} onClick={()=>void executePlannedPractice(panel.libraryId!)}>
+                 {executingPlan ? '正在创建任务…' : '确认并生成复习题'}<Icon name="arrow" size={18}/>
+               </button>
+             </> : <p className="supporting">这个知识库还没有可复用的原始资料，请先返回首页上传资料。</p>}
+           </>}
+         </section>}
+         {panel.type === 'overview' && <><p className="sheet-description">总览入口留在“我的”。具体知识点与学习建议，回到对应知识库查看。</p><div className="overview-libraries">{libraries.map(library => <button key={library.id} onClick={() => { navigate('libraries', library.id) }}><span className={`target-mark cover-${library.color}`}>{library.mark}</span><span><strong>{library.title}</strong><small>进入知识库查看学习分析</small></span><Icon name="chevron" size={16}/></button>)}</div><p className="prototype-note">当前不展示未经计算的掌握概率或整体学习结论。</p></>}
         {panel.type === 'settings' && <><p className="sheet-description">让学习空间保持简单、清晰。</p><div className="settings-row"><span>外观</span><strong>手帐风 · 暖白与苔绿</strong></div><div className="settings-row"><span>学习数据</span><strong>{onlineTrial ? '保存在试用服务器' : '保存在本机'}</strong></div><p className="supporting">昵称与学习偏好保存在当前浏览器，练习记录来自当前学习空间。</p><button className="secondary-button" onClick={()=>setPanel({type:'demo'})}>使用说明</button><button className="secondary-button reset-demo" onClick={resetDemo}>清空出题草稿</button></>}
       </Sheet>}
     </div></div>
