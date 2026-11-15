@@ -238,6 +238,125 @@ def test_study_executor_requires_original_file_and_model_readiness(tmp_path, mon
         assert db.execute('SELECT COUNT(*) FROM study_practice_dispatches').fetchone()[0] == 0
 
 
+
+def test_agent_evaluation_uses_real_task_metadata_not_model_claims(tmp_path, monkeypatch):
+    import json
+    from backend import web_trial
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
+    monkeypatch.setattr(web_trial, 'generation_readiness', lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    browser = client(app)
+    browser.get('/')
+    headers = {'Origin': ORIGIN}
+    original = submit_recovery_task(browser, library='sql')
+    store = browser_store(tmp_path, browser)
+    store.update(original, 'failed', '测试旧任务完成')
+    proposal = browser.get('/api/study-plans/sql').json()
+    payload = {
+        'revision': proposal['revision'], 'sourceFileId': proposal['sourceFiles'][0]['id'],
+        'clientRequestId': 'f'*32, 'questionCount': 2,
+    }
+    dispatched = browser.post('/api/study-plans/sql/execute', headers=headers, json=payload)
+    assert dispatched.status_code == 202, dispatched.text
+    task = dispatched.json()['taskId']
+    queued = browser.get('/api/study-evaluation/sql')
+    assert queued.status_code == 200
+    data = queued.json()
+    assert data['sampleCount'] == 1
+    assert data['summary']['pendingCount'] == 1
+    assert data['summary']['completedRate'] is None
+    assert data['summary']['autoAcceptanceRatio'] is None
+    assert data['runs'][0]['planAction'] == 'prepare_diagnostic'
+    assert data['runs'][0]['generatedCandidates'] is None
+    assert data['notMeasured'] == ['answerCorrectness', 'citationSupportRate',
+                                    'humanUsability', 'agentDecisionQuality', 'llmTokenCost']
+
+    # Artificial fixture is persisted as a task result, NOT a claimed live model run.
+    fake_result = {
+        'accepted': 2,
+        'files': [{'generatedCandidates': 5, 'name': 'private-lesson.txt'}],
+        'rejected': [
+            {'status': 'rejected_or_needs_review',
+             'reasons': ['private diagnostic reason: password=SHOULD_NOT_LEAK']},
+            {'status': 'visual_unverified', 'question': 'do not expose original question'},
+        ],
+        'secretPrompt': 'do not expose original prompt',
+    }
+    with store.db() as db:
+        db.execute(
+            "UPDATE jobs SET state='succeeded',result=?,updated=created+3 WHERE id=?",
+            (json.dumps(fake_result), task),
+        )
+        db.execute(
+            "INSERT INTO job_events(job_id,state,stage,created) VALUES(?,?,?,?)",
+            (task, 'running', 'AI生成题目 · 测试', 1.0),
+        )
+        db.execute(
+            "INSERT INTO job_events(job_id,state,stage,created) VALUES(?,?,?,?)",
+            (task, 'running', '根据质检原因重新生成', 2.0),
+        )
+    evaluated = browser.get('/api/study-evaluation/sql')
+    assert evaluated.status_code == 200, evaluated.text
+    body = evaluated.json()
+    assert body['summary']['succeededCount'] == 1
+    assert body['summary']['completedRate'] == 1
+    assert body['summary']['measuredGeneratedCandidates'] == 5
+    assert body['summary']['measuredAutoAccepted'] == 2
+    assert body['summary']['autoAcceptanceRatio'] == .4
+    assert body['runs'][0]['retryEvents'] == 1
+    assert body['runs'][0]['generationEvents'] == 1
+    assert body['runs'][0]['wallTimeMs'] == 3000
+    assert body['runs'][0]['rejectionCategories'] == {
+        'rejected_or_needs_review': 1, 'visual_unverified': 1,
+    }
+    assert 'private' not in evaluated.text
+    assert 'password=' not in evaluated.text
+    assert 'original question' not in evaluated.text
+    assert 'SHOULD_NOT_LEAK' not in evaluated.text
+    with store.db() as db:
+        assert db.execute('SELECT state FROM jobs WHERE id=?', (task,)).fetchone()[0] == 'succeeded'
+
+
+def test_agent_evaluation_rejects_other_spaces_and_deleted_libraries(tmp_path):
+    app = app_at(tmp_path)
+    alice, bob = client(app), client(app)
+    assert alice.get('/api/study-evaluation/sql').status_code == 401
+    alice.get('/')
+    bob.get('/')
+    headers = {'Origin': ORIGIN}
+    assert alice.put('/api/libraries/sql', headers=headers,
+                     json={'title': 'SQL'}).status_code == 200
+    assert bob.get('/api/study-evaluation/sql').status_code == 404
+    assert alice.get('/api/study-evaluation/sql').json()['sampleCount'] == 0
+    assert alice.get('/api/study-evaluation/bad.id').status_code == 422
+    assert alice.get('/api/study-evaluation/sql',
+                     headers={'Origin': 'https://evil.test'}).status_code == 403
+    assert alice.delete('/api/libraries/sql', headers=headers).status_code == 200
+    assert alice.get('/api/study-evaluation/sql').status_code == 404
+
+
+def test_agent_evaluation_migrates_existing_dispatch_receipts(tmp_path):
+    from backend.study_practice_executor import ensure_execution_tables
+    from backend.web_trial import TrialStore
+    store = TrialStore(tmp_path / 'legacy-space')
+    with store.db() as db:
+        db.execute('''CREATE TABLE study_practice_dispatches (
+            client_request_id TEXT PRIMARY KEY,
+            task_id TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            created REAL NOT NULL
+        )''')
+        db.execute(
+            "INSERT INTO study_practice_dispatches VALUES(?,?,?,?)",
+            ('a'*32, 'b'*32, 'c'*64, 1.0),
+        )
+        ensure_execution_tables(db)
+        ensure_execution_tables(db)
+        row = db.execute("SELECT client_request_id,plan_action FROM study_practice_dispatches").fetchone()
+        assert row['client_request_id'] == 'a'*32
+        assert row['plan_action'] == 'unknown'
+
+
 def test_sessions_are_isolated_and_survive_restart(tmp_path):
     app = app_at(tmp_path)
     first, second = client(app), client(app)
