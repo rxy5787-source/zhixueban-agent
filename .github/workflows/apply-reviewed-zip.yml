@@ -1,4 +1,4 @@
-name: Apply reviewed ZIP changes
+name: Apply reviewed ZIP changes on temporary import branch
 on:
   push:
     branches:
