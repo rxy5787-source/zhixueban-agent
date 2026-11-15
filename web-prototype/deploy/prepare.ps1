@@ -1,5 +1,5 @@
 param(
-    [string]$PythonProject = 'E:\GraduationProject\AdaptiveQuestionAI',
+    [string]$PythonProject = (Join-Path $PSScriptRoot '..\..\python-ai'),
     [string]$OutputZip = (Join-Path $PSScriptRoot '..\..\artifacts\zhixueban-cloud-trial.zip')
 )
 

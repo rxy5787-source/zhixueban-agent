@@ -21,7 +21,7 @@
 - **P0 · 可复现启动与 CI** · [ZH-01 让新开发者能启动项目](https://github.com/rxy5787-source/zhixueban-agent/issues/2) · [ZH-02 设置 CI 和版本基线](https://github.com/rxy5787-source/zhixueban-agent/issues/3)
 - **P1 · 可靠性与权限** · [ZH-03 验证任务重启和重试](https://github.com/rxy5787-source/zhixueban-agent/issues/4) · [ZH-04 验证学习空间隔离](https://github.com/rxy5787-source/zhixueban-agent/issues/5) · [ZH-05 建立分阶段日志](https://github.com/rxy5787-source/zhixueban-agent/issues/6)
 - **P2 · 质量与容量** · [ZH-06 固定口诀和出题评测集](https://github.com/rxy5787-source/zhixueban-agent/issues/7) · [ZH-07 测量单机并发容量](https://github.com/rxy5787-source/zhixueban-agent/issues/8)
-- **P3 · Agent 与作品展示** · [ZH-08 提取可验证的 Agent 工具接口](https://github.com/rxy5787-source/zhixueban-agent/issues/9) · [ZH-09 加入有边界的任务路由](https://github.com/rxy5787-source/zhixueban-agent/issues/10) · [ZH-10 完成求职作品展示](https://github.com/rxy5787-source/zhixueban-agent/issues/11)
+- **P3 · Agent 化与文档** · [ZH-08 提取可验证的 Agent 工具接口](https://github.com/rxy5787-source/zhixueban-agent/issues/9) · [ZH-09 加入有边界的任务路由](https://github.com/rxy5787-source/zhixueban-agent/issues/10) · [ZH-10 整理架构说明与演示](https://github.com/rxy5787-source/zhixueban-agent/issues/11)
 
 每个 Issue 记录目标、验收条件和相关 PR。查看 PR 的 **Files changed** 回顾代码，查看 **Checks** 核对自动测试。改动合入后，在 Issue 留下提交和验收结果，再关闭任务。
 
@@ -46,6 +46,17 @@ ollama pull qwen3:1.7b
 3. 等待质检和归档完成，打开结果中的练习，提交答案后查看知识点报告。
 
 本地预览数据保存在 `web-prototype/.verification/study-local`，按 `Ctrl+C` 停止预览。自动验收脚本 `web-prototype/deploy/smoke_trial.py` 使用独立数据目录，检查真实模型调用、自动归档、答题报告和第二个访客的访问隔离。
+
+## 运行测试
+
+质检关口、任务存储和文本清理的单元测试不需要模型，也不需要启动服务：
+
+```powershell
+cd python-ai
+python -m pytest -q
+```
+
+测试用固定的假实现代替模型调用，检查每道关口给出的拒绝原因，并确认前面的关口已拒绝时不会再调用模型。真实模型的出题质量见[生成质量评测](docs/STUDY_GENERATION_EVAL.md)。Web API 的回归测试 `web-prototype/deploy/test_web_trial.py` 在 CI 中针对打包后的后端运行。
 
 ## 部署与实现边界
 
