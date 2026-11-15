@@ -29,6 +29,17 @@ def test_suite_exactly_matches_original_twenty_cases():
     }
 
 
+def test_runtime_prompts_are_direct_questions_without_answer_key_leakage():
+    cases = zh06.load_cases()
+    assert zh06.case_prompt(cases[0]).startswith("请根据资料编写一条便于回忆的记忆口诀：")
+    assert zh06.case_prompt(cases[16]).startswith("请根据资料生成一道四选一单选题：")
+    negative = zh06.case_prompt(cases[19])
+    assert "TCP" in negative and "SQL" in negative
+    assert "拒绝" not in negative
+    assert "不得用 SQL 原文冒充依据" not in negative
+    assert cases[19]["negative"] is True
+
+
 def test_suite_fails_closed_on_missing_or_duplicate_questions(tmp_path):
     content = zh06.SUITE.read_text(encoding="utf-8")
     altered = tmp_path / "suite.md"
