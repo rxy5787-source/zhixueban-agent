@@ -61,6 +61,21 @@ def test_live_runner_rejects_non_loopback_or_ambiguous_urls(value):
         zh06.loopback_origin(value)
 
 
+def test_local_redirects_are_rejected_without_following():
+    class Redirect:
+        status_code = 302
+
+    with pytest.raises(RuntimeError, match="redirect"):
+        zh06.checked_local_response(Redirect())
+
+
+def test_source_revision_is_optional_but_not_a_fabricated_hash(monkeypatch):
+    def missing_git(*args, **kwargs):
+        raise FileNotFoundError("git")
+    monkeypatch.setattr(zh06.subprocess, "run", missing_git)
+    assert zh06.code_revision() is None
+
+
 def test_live_runner_accepts_explicit_loopback():
     assert zh06.loopback_origin("http://127.0.0.1:8095/") == "http://127.0.0.1:8095"
     assert zh06.loopback_origin("http://localhost:8095") == "http://localhost:8095"
