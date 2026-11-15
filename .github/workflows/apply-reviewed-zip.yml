@@ -22,8 +22,8 @@ jobs:
           set -euo pipefail
           base64 --decode .github/import/zhixueban_reviewed_patch.b64 | gzip --decompress > /tmp/reviewed-source.patch
           echo "cd56e0439da7af1923a6e641e57fd2ada62bc7e5fc92016bd5d57ae2efedbc29  /tmp/reviewed-source.patch" | sha256sum --check
-          git apply --check /tmp/reviewed-source.patch
-          git apply --index /tmp/reviewed-source.patch
+          git apply --check --exclude='.github/workflows/web-ci.yml' /tmp/reviewed-source.patch
+          git apply --index --exclude='.github/workflows/web-ci.yml' /tmp/reviewed-source.patch
           git rm .github/import/zhixueban_reviewed_patch.b64 .github/workflows/apply-reviewed-zip.yml
           git diff --cached --check
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'test: add evidence-gate unit tests and format Python code'
