@@ -115,6 +115,7 @@ def test_study_plan_rejects_invalid_persisted_progress(tmp_path):
 
 def test_study_executor_reuses_verified_source_and_queues_once(tmp_path, monkeypatch):
     from backend import web_trial
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
     monkeypatch.setattr(web_trial, 'generation_readiness', lambda: {'generationReady': True})
     app = app_at(tmp_path)
     browser = client(app)
@@ -154,6 +155,7 @@ def test_study_executor_reuses_verified_source_and_queues_once(tmp_path, monkeyp
 
 def test_study_executor_denies_other_space_and_removed_source(tmp_path, monkeypatch):
     from backend import web_trial
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
     monkeypatch.setattr(web_trial, 'generation_readiness', lambda: {'generationReady': True})
     app = app_at(tmp_path)
     alice, bob = client(app), client(app)
@@ -182,6 +184,7 @@ def test_study_executor_denies_other_space_and_removed_source(tmp_path, monkeypa
 
 def test_study_executor_prevents_stale_plan_and_reused_id_changes(tmp_path, monkeypatch):
     from backend import web_trial
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
     monkeypatch.setattr(web_trial, 'generation_readiness', lambda: {'generationReady': True})
     app = app_at(tmp_path)
     browser = client(app)
@@ -210,6 +213,7 @@ def test_study_executor_prevents_stale_plan_and_reused_id_changes(tmp_path, monk
 
 def test_study_executor_requires_original_file_and_model_readiness(tmp_path, monkeypatch):
     from backend import web_trial
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
     app = app_at(tmp_path)
     browser = client(app)
     browser.get('/')
