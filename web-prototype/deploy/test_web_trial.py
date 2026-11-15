@@ -33,6 +33,85 @@ def create_exam(browser, library):
     })
 
 
+
+def test_study_plan_requires_session_and_an_existing_library(tmp_path):
+    app = app_at(tmp_path)
+    visitor = client(app)
+    assert visitor.get('/api/study-plans/study').status_code == 401
+    visitor.get('/')
+    assert visitor.get('/api/study-plans/study').status_code == 404
+    assert visitor.get('/api/study-plans/bad.id').status_code == 422
+
+    assert visitor.put('/api/libraries/study', headers={'Origin': ORIGIN},
+                       json={'title': '数据库'}).status_code == 200
+    response = visitor.get('/api/study-plans/study')
+    assert response.status_code == 200, response.text
+    plan = response.json()
+    assert plan['status'] == 'needs_diagnosis'
+    assert plan['next_action'] == 'prepare_diagnostic'
+    assert plan['topics'] == []
+    assert plan['visited_skills'] == ['get_weak_knowledge_points', 'plan_diagnostic']
+
+    assert visitor.delete('/api/libraries/study', headers={'Origin': ORIGIN}).status_code == 200
+    assert visitor.get('/api/study-plans/study').status_code == 404
+    assert visitor.get('/api/study-plans/study', headers={'Origin': 'https://evil.test'}).status_code == 403
+
+
+def test_study_plan_uses_only_verified_browser_space_and_never_writes(tmp_path):
+    app = app_at(tmp_path)
+    alice, bob = client(app), client(app)
+    alice.get('/')
+    bob.get('/')
+    headers = {'Origin': ORIGIN}
+    for browser in (alice, bob):
+        assert browser.put('/api/libraries/sql', headers=headers,
+                           json={'title': 'SQL'}).status_code == 200
+
+    with browser_store(tmp_path, alice).db() as db:
+        db.execute('''INSERT INTO web_point_progress
+            (library_id, point_key, label, mastery, attempts, correct)
+            VALUES ('sql', 'having', 'HAVING', 0.28, 4, 1)''')
+    with browser_store(tmp_path, bob).db() as db:
+        db.execute('''INSERT INTO web_point_progress
+            (library_id, point_key, label, mastery, attempts, correct)
+            VALUES ('sql', 'where', 'WHERE', 0.82, 5, 4)''')
+
+    def snapshot(browser):
+        with browser_store(tmp_path, browser).db() as db:
+            return tuple(tuple(row) for row in db.execute(
+                'SELECT * FROM web_point_progress ORDER BY point_key'))
+
+    before_alice, before_bob = snapshot(alice), snapshot(bob)
+    result_alice = alice.get('/api/study-plans/sql')
+    result_bob = bob.get('/api/study-plans/sql')
+    assert result_alice.status_code == result_bob.status_code == 200
+    assert result_alice.json()['next_action'] == 'prepare_targeted_practice'
+    assert result_alice.json()['topics'] == ['HAVING']
+    assert result_bob.json()['next_action'] == 'prepare_review'
+    assert result_bob.json()['topics'] == []
+    assert snapshot(alice) == before_alice
+    assert snapshot(bob) == before_bob
+
+    assert alice.put('/api/libraries/alice-only', headers=headers,
+                     json={'title': '仅本人'}).status_code == 200
+    assert bob.get('/api/study-plans/alice-only').status_code == 404
+
+
+def test_study_plan_rejects_invalid_persisted_progress(tmp_path):
+    app = app_at(tmp_path)
+    browser = client(app)
+    browser.get('/')
+    assert browser.put('/api/libraries/sql', headers={'Origin': ORIGIN},
+                       json={'title': 'SQL'}).status_code == 200
+    with browser_store(tmp_path, browser).db() as db:
+        db.execute('''INSERT INTO web_point_progress
+            (library_id, point_key, label, mastery, attempts, correct)
+            VALUES ('sql', 'having', 'HAVING', 0.2, 1, 2)''')
+    result = browser.get('/api/study-plans/sql')
+    assert result.status_code == 409
+    assert '学习进度' in result.json()['detail']
+
+
 def test_sessions_are_isolated_and_survive_restart(tmp_path):
     app = app_at(tmp_path)
     first, second = client(app), client(app)

@@ -25,6 +25,7 @@ from .web_api import WebStore, init_web_tables, request_store_override, routes
 from .worker import Runner
 from .trial_body_limit import RequestBodyLimit
 from . import resumable_uploads
+from .study_plan_service import plan_for_library
 
 
 LOGGER = logging.getLogger(__name__)
@@ -283,6 +284,20 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
             login_attempts.pop(address, None)
         ident = existing_space(request) or spaces.new(address)
         return attach_cookie(RedirectResponse('/', status_code=303, headers={'Cache-Control': 'no-store'}), ident)
+
+    @app.get('/api/study-plans/{library_id}')
+    def study_plan(library_id: str, request: Request):
+        # The verified session picks the store; the path only picks a library
+        # inside that store. No user-selected directory or owner identifier.
+        space_id = existing_space(request)
+        if space_id is None:
+            raise HTTPException(401, '请先建立浏览器会话')
+        current_store = spaces.get(space_id)
+        if current_store is None:
+            raise HTTPException(401, '浏览器会话已失效')
+        with current_store.db() as db:
+            result = plan_for_library(db, library_id)
+        return result.model_dump()
 
     @app.get('/favicon.svg')
     def favicon():
