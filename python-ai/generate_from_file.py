@@ -4,11 +4,10 @@ from pathlib import Path
 
 import requests
 from backend.model_status import checked_model_response
+
 AUDIT = None
 import pymupdf
 from docx import Document
-
-
 
 # =====================================
 # 1. 基础配置
@@ -43,6 +42,7 @@ ocr_engine = None
 # 2. 图片文字识别
 # =====================================
 
+
 def recognize_image(image_data):
 
     global ocr_engine
@@ -50,6 +50,7 @@ def recognize_image(image_data):
     if ocr_engine is None:
         print("正在初始化OCR文字识别引擎...")
         from rapidocr import RapidOCR
+
         ocr_engine = RapidOCR()
 
     result = ocr_engine(image_data)
@@ -63,11 +64,13 @@ def recognize_image(image_data):
 # 3. 读取Word文件
 # =====================================
 
+
 def read_word(file_path):
 
     print("正在读取Word文件...")
 
     from backend.file_storage import validate_file
+
     validate_file(Path(file_path), Path(file_path).name)
     document = Document(str(file_path))
 
@@ -86,10 +89,7 @@ def read_word(file_path):
 
         for row in table.rows:
 
-            cells = [
-                cell.text.strip()
-                for cell in row.cells
-            ]
+            cells = [cell.text.strip() for cell in row.cells]
 
             if any(cells):
                 content.append(" | ".join(cells))
@@ -101,6 +101,7 @@ def read_word(file_path):
 # 4. 读取PDF文件
 # =====================================
 
+
 def read_pdf(file_path):
 
     print("正在读取PDF文件...")
@@ -111,32 +112,21 @@ def read_pdf(file_path):
 
         total_pages = len(pdf)
 
-        pages_to_read = min(
-            total_pages,
-            MAX_PDF_PAGES
-        )
+        pages_to_read = min(total_pages, MAX_PDF_PAGES)
 
         print(f"PDF总页数：{total_pages}")
 
         if total_pages > MAX_PDF_PAGES:
-            print(
-                f"测试模式：暂时只读取前"
-                f"{MAX_PDF_PAGES}页"
-            )
+            print(f"测试模式：暂时只读取前" f"{MAX_PDF_PAGES}页")
 
         for page_number in range(pages_to_read):
 
             page = pdf[page_number]
 
-            print(
-                f"正在处理第{page_number + 1}页..."
-            )
+            print(f"正在处理第{page_number + 1}页...")
 
             # 优先直接提取PDF文字
-            text = page.get_text(
-                "text",
-                sort=True
-            ).strip()
+            text = page.get_text("text", sort=True).strip()
 
             # 如果没有足够的可提取文字
             # 则尝试OCR识别
@@ -144,10 +134,7 @@ def read_pdf(file_path):
 
                 print("检测到可能是扫描页面，正在OCR识别...")
 
-                pix = page.get_pixmap(
-                    dpi=150,
-                    alpha=False
-                )
+                pix = page.get_pixmap(dpi=150, alpha=False)
 
                 image_bytes = pix.tobytes("png")
 
@@ -155,9 +142,7 @@ def read_pdf(file_path):
 
             if text:
 
-                content.append(
-                    f"\n【第{page_number + 1}页】\n{text}"
-                )
+                content.append(f"\n【第{page_number + 1}页】\n{text}")
 
     return "\n".join(content)
 
@@ -165,6 +150,7 @@ def read_pdf(file_path):
 # =====================================
 # 5. 读取图片文件
 # =====================================
+
 
 def read_image(file_path):
 
@@ -182,6 +168,7 @@ def read_image(file_path):
 # 6. 根据文件类型自动选择读取方式
 # =====================================
 
+
 def read_file(file_path):
 
     suffix = file_path.suffix.lower()
@@ -194,31 +181,23 @@ def read_file(file_path):
 
         return read_pdf(file_path)
 
-    elif suffix in [
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".bmp"
-    ]:
+    elif suffix in [".jpg", ".jpeg", ".png", ".bmp"]:
 
         return read_image(file_path)
 
     elif suffix == ".txt":
 
-        return file_path.read_text(
-            encoding="utf-8-sig"
-        )
+        return file_path.read_text(encoding="utf-8-sig")
 
     else:
 
-        raise ValueError(
-            f"暂不支持这种文件格式：{suffix}"
-        )
+        raise ValueError(f"暂不支持这种文件格式：{suffix}")
 
 
 # =====================================
 # 7. 文本分段
 # =====================================
+
 
 def split_text(text):
 
@@ -228,7 +207,7 @@ def split_text(text):
 
     for i in range(0, len(text), MAX_CHARS):
 
-        part = text[i:i + MAX_CHARS]
+        part = text[i : i + MAX_CHARS]
 
         if part.strip():
             parts.append(part)
@@ -240,27 +219,56 @@ def split_text(text):
 # 8. 调用千问自动生成题目
 # =====================================
 
-def generate_questions(material, question_count=None, knowledge_points=None, timeout=600, raw_candidates=False, feedback=None, requirements="", difficulty=0, used_evidence=None, allow_rule_generation=True, compact_source=False):
+
+def generate_questions(
+    material,
+    question_count=None,
+    knowledge_points=None,
+    timeout=600,
+    raw_candidates=False,
+    feedback=None,
+    requirements="",
+    difficulty=0,
+    used_evidence=None,
+    allow_rule_generation=True,
+    compact_source=False,
+):
 
     requested = question_count or QUESTIONS_PER_PART
     # Evidence is copied by index; a small model must not freely rewrite it.
     import re
-    segments=[m.group().strip() for m in re.finditer(r'[^。；;\n]+[。；;]?',material)
-              if len(re.sub(r'\W','',m.group()))>=8 and not re.search(r'[=＝:：，,]$',m.group().strip())]
+
+    segments = [
+        m.group().strip()
+        for m in re.finditer(r'[^。；;\n]+[。；;]?', material)
+        if len(re.sub(r'\W', '', m.group())) >= 8
+        and not re.search(r'[=＝:：，,]$', m.group().strip())
+    ]
     if compact_source:
         from backend.practice_quality import source_units
-        segments=source_units(material)
-    if used_evidence:segments=[segment for segment in segments if segment not in used_evidence]
-    if not segments:return []
-    requested=min(requested,len(segments))
-    from backend.literal_evidence import question_hints,questions_from_facts
-    grounded=questions_from_facts(segments,knowledge_points,requested,difficulty,requirements) if allow_rule_generation else []
+
+        segments = source_units(material)
+    if used_evidence:
+        segments = [segment for segment in segments if segment not in used_evidence]
+    if not segments:
+        return []
+    requested = min(requested, len(segments))
+    from backend.literal_evidence import question_hints, questions_from_facts
+
+    grounded = (
+        questions_from_facts(segments, knowledge_points, requested, difficulty, requirements)
+        if allow_rule_generation
+        else []
+    )
     if grounded and allow_rule_generation:
-        if AUDIT:AUDIT('rule_generation',{'method':'source_quantity_template_v1','questions':grounded})
+        if AUDIT:
+            AUDIT(
+                'rule_generation', {'method': 'source_quantity_template_v1', 'questions': grounded}
+            )
         return grounded
-    hints=question_hints(segments)
-    planned={hint['sourceIndex']:hint['questionFocus'] for hint in hints}
-    quantity_only=len(planned)==len(segments)
+    hints = question_hints(segments)
+    planned = {hint['sourceIndex']: hint['questionFocus'] for hint in hints}
+    quantity_only = len(planned) == len(segments)
     point_names = [p["name"] for p in knowledge_points] if knowledge_points else None
     prompt = f"""依据下方资料生成{requested}道中文单选题。
 命题步骤：先选资料中一句明确的定义或事实，再围绕这一个事实提出问题；正确选项表达该事实，另外三个选项表达不同且不成立的含义。四个选项必须相互排斥。
@@ -273,14 +281,31 @@ def generate_questions(material, question_count=None, knowledge_points=None, tim
 同一条原文不要重复出题。JSON字段：questions数组；每题含 sourceIndex、question、options（A/B/C/D）、answer、knowledgePoint、difficulty（简单/中等/困难）。
 """
     if knowledge_points:
-        prompt += "\n本次仅考查以下知识点，knowledgePoint 必须逐字采用目录名称：" + json.dumps(knowledge_points,ensure_ascii=False)
+        prompt += "\n本次仅考查以下知识点，knowledgePoint 必须逐字采用目录名称：" + json.dumps(
+            knowledge_points, ensure_ascii=False
+        )
     if feedback:
         prompt += "\n上轮质检指出以下问题，请重新选取一个明确事实，避免这些问题：" + feedback
-    prompt += "\n【编号资料】\n" + json.dumps([{'sourceIndex':i,'text':text} for i,text in enumerate(segments)],ensure_ascii=False) + "\n围绕明确事实生成互斥的单选题，sourceIndex 必须指向该题直接依据的原句。只返回JSON。"
-    prompt += "\n【学习者本次出题要求】\n" + requirements + f"\n本次调用最多生成{requested}道四选一单选题，难度为" + (["按资料选择","简单","中等","困难"][difficulty]) + "。重点和提问方式遵循用户要求，但不得超出资料、知识点目录、题型与质量约束。题数和难度以本段结构化参数为准。"
+    prompt += (
+        "\n【编号资料】\n"
+        + json.dumps(
+            [{'sourceIndex': i, 'text': text} for i, text in enumerate(segments)],
+            ensure_ascii=False,
+        )
+        + "\n围绕明确事实生成互斥的单选题，sourceIndex 必须指向该题直接依据的原句。只返回JSON。"
+    )
+    prompt += (
+        "\n【学习者本次出题要求】\n"
+        + requirements
+        + f"\n本次调用最多生成{requested}道四选一单选题，难度为"
+        + (["按资料选择", "简单", "中等", "困难"][difficulty])
+        + "。重点和提问方式遵循用户要求，但不得超出资料、知识点目录、题型与质量约束。题数和难度以本段结构化参数为准。"
+    )
     prompt += '\nsourceIndex只是程序内部的证据定位字段，不能成为考点。禁止询问原文第几句、哪句原文或句子编号；选项必须是知识内容。题干不能直接泄露答案。'
     if hints:
-        prompt += '\n原文明示的数量规则可以按以下方向提问，请据原文作答并生成四个互异的数量选项，不要考查句子编号：'+json.dumps(hints,ensure_ascii=False)
+        prompt += '\n原文明示的数量规则可以按以下方向提问，请据原文作答并生成四个互异的数量选项，不要考查句子编号：' + json.dumps(
+            hints, ensure_ascii=False
+        )
     if quantity_only:
         prompt += '\n本段题干已按原文完整条件和动作确定。只为各 sourceIndex 的既定题干生成四个互异的数量选项、标准答案、知识点和难度，不要自行改写题干。'
     if compact_source:
@@ -291,33 +316,86 @@ def generate_questions(material, question_count=None, knowledge_points=None, tim
 编号资料：
 {source}'''
         if len(segments) >= requested * 3 and requested > 1:
-            ranges = [f'{i * len(segments) // requested}–{(i + 1) * len(segments) // requested - 1}' for i in range(requested)]
-            prompt += '\n若学习者未限定具体考点，优先从这些编号区间各选一个有完整依据的不同考点：' + '、'.join(ranges)
+            ranges = [
+                f'{i * len(segments) // requested}–{(i + 1) * len(segments) // requested - 1}'
+                for i in range(requested)
+            ]
+            prompt += (
+                '\n若学习者未限定具体考点，优先从这些编号区间各选一个有完整依据的不同考点：'
+                + '、'.join(ranges)
+            )
         if point_names:
             prompt += '\n知识点限用：' + '、'.join(point_names)
         if hints:
-            prompt += '\n数量题沿用这些完整题干，选项使用相同单位和不同数值：' + json.dumps(hints,ensure_ascii=False)
+            prompt += '\n数量题沿用这些完整题干，选项使用相同单位和不同数值：' + json.dumps(
+                hints, ensure_ascii=False
+            )
         if feedback:
             prompt += '\n避免上一批的问题：' + feedback
-    text = {"type":"string","minLength":1}
-    props = {"sourceIndex":{"type":"integer","enum":list(range(len(segments)))},"question":text,"options":{"type":"object","properties":{x:text for x in "ABCD"},"required":list("ABCD"),"additionalProperties":False},"answer":{"type":"string","enum":list("ABCD")},"knowledgePoint":{"type":"string","enum":point_names} if point_names else text,"difficulty":{"type":"string","enum":(["简单","中等","困难"] if not difficulty else [["简单","中等","困难"][difficulty-1]])}}
-    props['question']={'type':'string','minLength':6,'pattern':'[？?]$'}
-    if quantity_only:props.pop('question')
-    schema = {"type":"object","properties":{"questions":{"type":"array","minItems":0,"maxItems":requested,"items":{"type":"object","properties":props,"required":list(props),"additionalProperties":False}}},"required":["questions"],"additionalProperties":False}
-    data = {"model":MODEL_NAME,"messages":[{"role":"user","content":prompt}],"stream":False,"think":False,"format":schema,"options":{"temperature":0.35 if compact_source else 0.6,"num_ctx":4096,"num_predict":1400 if compact_source else 1600}}
+    text = {"type": "string", "minLength": 1}
+    props = {
+        "sourceIndex": {"type": "integer", "enum": list(range(len(segments)))},
+        "question": text,
+        "options": {
+            "type": "object",
+            "properties": {x: text for x in "ABCD"},
+            "required": list("ABCD"),
+            "additionalProperties": False,
+        },
+        "answer": {"type": "string", "enum": list("ABCD")},
+        "knowledgePoint": {"type": "string", "enum": point_names} if point_names else text,
+        "difficulty": {
+            "type": "string",
+            "enum": (
+                ["简单", "中等", "困难"]
+                if not difficulty
+                else [["简单", "中等", "困难"][difficulty - 1]]
+            ),
+        },
+    }
+    props['question'] = {'type': 'string', 'minLength': 6, 'pattern': '[？?]$'}
+    if quantity_only:
+        props.pop('question')
+    schema = {
+        "type": "object",
+        "properties": {
+            "questions": {
+                "type": "array",
+                "minItems": 0,
+                "maxItems": requested,
+                "items": {
+                    "type": "object",
+                    "properties": props,
+                    "required": list(props),
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["questions"],
+        "additionalProperties": False,
+    }
+    data = {
+        "model": MODEL_NAME,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "think": False,
+        "format": schema,
+        "options": {
+            "temperature": 0.35 if compact_source else 0.6,
+            "num_ctx": 4096,
+            "num_predict": 1400 if compact_source else 1600,
+        },
+    }
 
     print("正在调用本地千问模型...")
 
-    response = requests.post(
-        OLLAMA_URL,
-        json=data,
-        timeout=(10, timeout)
-    )
+    response = requests.post(OLLAMA_URL, json=data, timeout=(10, timeout))
 
-    checked_model_response(response,MODEL_NAME)
+    checked_model_response(response, MODEL_NAME)
 
     result = response.json()
-    if AUDIT: AUDIT("generation", result)
+    if AUDIT:
+        AUDIT("generation", result)
 
     content = result["message"]["content"]
 
@@ -326,17 +404,17 @@ def generate_questions(material, question_count=None, knowledge_points=None, tim
     questions = question_data.get("questions")
 
     if not isinstance(questions, list):
-        raise ValueError(
-            "模型未返回有效的questions列表"
-        )
+        raise ValueError("模型未返回有效的questions列表")
 
     for question in questions:
-        if isinstance(question,dict):
-            index=question.pop('sourceIndex',None)
-            question['explanation']=segments[index] if type(index) is int and 0<=index<len(segments) else ''
+        if isinstance(question, dict):
+            index = question.pop('sourceIndex', None)
+            question['explanation'] = (
+                segments[index] if type(index) is int and 0 <= index < len(segments) else ''
+            )
             if type(index) is int and index in planned:
-                question['question']=planned[index]
-                question['questionConstruction']='source_quantity_template_v1'
+                question['question'] = planned[index]
+                question['questionConstruction'] = 'source_quantity_template_v1'
     if raw_candidates:
         return questions
 
@@ -358,19 +436,16 @@ def generate_questions(material, question_count=None, knowledge_points=None, tim
         if not required_options.issubset(options.keys()):
             continue
 
-        if not isinstance(question.get("answer"), str) or question["answer"] not in required_options:
+        if (
+            not isinstance(question.get("answer"), str)
+            or question["answer"] not in required_options
+        ):
             continue
 
-        required_fields = [
-            "question",
-            "explanation",
-            "knowledgePoint",
-            "difficulty"
-        ]
+        required_fields = ["question", "explanation", "knowledgePoint", "difficulty"]
 
         if not all(
-            isinstance(question.get(field), str)
-            and question.get(field).strip()
+            isinstance(question.get(field), str) and question.get(field).strip()
             for field in required_fields
         ):
             continue
@@ -383,6 +458,7 @@ def generate_questions(material, question_count=None, knowledge_points=None, tim
 # =====================================
 # 9. 主程序
 # =====================================
+
 
 def main():
 
@@ -402,22 +478,14 @@ def main():
     root.attributes("-topmost", True)
 
     file_name = filedialog.askopenfilename(
-
         title="请选择学习资料",
-
         filetypes=[
-            (
-                "所有支持的文件",
-                "*.pdf *.docx *.jpg *.jpeg *.png *.bmp *.txt"
-            ),
+            ("所有支持的文件", "*.pdf *.docx *.jpg *.jpeg *.png *.bmp *.txt"),
             ("PDF文件", "*.pdf"),
             ("Word文件", "*.docx"),
-            (
-                "图片文件",
-                "*.jpg *.jpeg *.png *.bmp"
-            ),
-            ("文本文件", "*.txt")
-        ]
+            ("图片文件", "*.jpg *.jpeg *.png *.bmp"),
+            ("文本文件", "*.txt"),
+        ],
     )
 
     root.destroy()
@@ -447,10 +515,7 @@ def main():
     # 保存提取的原始文字
     text_path = BASE_DIR / "extracted_text.txt"
 
-    text_path.write_text(
-        material,
-        encoding="utf-8"
-    )
+    text_path.write_text(material, encoding="utf-8")
 
     print("\n文字已保存到：")
     print(text_path)
@@ -469,24 +534,16 @@ def main():
 
     if len(parts) > MAX_PARTS:
 
-        print(
-            f"当前是测试模式，仅使用前{MAX_PARTS}段生成题目。"
-        )
+        print(f"当前是测试模式，仅使用前{MAX_PARTS}段生成题目。")
 
     selected_parts = parts[:MAX_PARTS]
 
     all_questions = []
 
     # 分段生成
-    for index, part in enumerate(
-        selected_parts,
-        start=1
-    ):
+    for index, part in enumerate(selected_parts, start=1):
 
-        print(
-            f"\n正在处理第{index}/"
-            f"{len(selected_parts)}段..."
-        )
+        print(f"\n正在处理第{index}/" f"{len(selected_parts)}段...")
 
         questions = generate_questions(part)
 
@@ -499,9 +556,7 @@ def main():
 
         all_questions.extend(questions)
 
-        print(
-            f"当前段生成{len(questions)}道有效结构题目"
-        )
+        print(f"当前段生成{len(questions)}道有效结构题目")
 
     if not all_questions:
 
@@ -509,26 +564,13 @@ def main():
         return
 
     # 最终输出
-    result = {
-        "sourceFile": file_path.name,
-        "total": len(all_questions),
-        "questions": all_questions
-    }
+    result = {"sourceFile": file_path.name, "total": len(all_questions), "questions": all_questions}
 
     output_path = BASE_DIR / "questions.json"
 
-    with open(
-        output_path,
-        "w",
-        encoding="utf-8"
-    ) as file:
+    with open(output_path, "w", encoding="utf-8") as file:
 
-        json.dump(
-            result,
-            file,
-            ensure_ascii=False,
-            indent=4
-        )
+        json.dump(result, file, ensure_ascii=False, indent=4)
 
     print("\n========== 生成完成 ==========")
 
@@ -554,7 +596,4 @@ if __name__ == "__main__":
 
         print("\n程序执行失败：")
 
-        print(
-            type(error).__name__,
-            str(error)
-        )
+        print(type(error).__name__, str(error))

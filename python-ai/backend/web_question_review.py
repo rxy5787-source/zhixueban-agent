@@ -1,4 +1,5 @@
 """Blind batch review of candidates against indexed source text for Web tasks."""
+
 import json
 import re
 import unicodedata
@@ -38,7 +39,9 @@ def leaks_answer(stem, option):
     named = NAMED_OPTION.fullmatch(option)
     if named:
         option, alias = named.groups()
-        if re.search(rf'(?<![A-Za-z0-9_-]){re.escape(alias)}(?![A-Za-z0-9_-])', stem, re.IGNORECASE):
+        if re.search(
+            rf'(?<![A-Za-z0-9_-]){re.escape(alias)}(?![A-Za-z0-9_-])', stem, re.IGNORECASE
+        ):
             return True
     answer = validator.normalize(option)
     min_length = 5 if re.search(r'[\u4e00-\u9fff]', answer) else 8
@@ -51,28 +54,55 @@ def resolve_evidence(question, units):
         return ''
     # An exact glossary heading can repair a misnumbered citation before blind review.
     point = validator.normalize(question['knowledgePoint'])
-    matches = [unit for unit in units if (entry := NAMED_ENTRY.match(unit))
-               and validator.normalize(entry[1]) == point]
+    matches = [
+        unit
+        for unit in units
+        if (entry := NAMED_ENTRY.match(unit)) and validator.normalize(entry[1]) == point
+    ]
     return matches[0] if len(matches) == 1 else proposed
 
 
 def request_reviews(candidates, units):
     # Independently answer using the cited literal evidence, without the proposed answer.
-    tasks = [{'id': ident, 'question': q['question'], 'options': q['options'], 'evidence': q['explanation']}
-             for ident, q in candidates.items()]
+    tasks = [
+        {
+            'id': ident,
+            'question': q['question'],
+            'options': q['options'],
+            'evidence': q['explanation'],
+        }
+        for ident, q in candidates.items()
+    ]
     source = '\n'.join(units)
     prompt = f'''逐题独立解答，检查全部四项。仅当本题 evidence 直接支持唯一答案时，返回题目 id、正确字母 answer、issue 为 ok。若两项都描述了被考对象的属性或作用，按歧义处理。不可用另一句话替代本题 evidence，也不可用常识填补条件。有歧义用 ambiguous，依据不足用 unsupported，需图表用 visual，题意不清或选项不可比用 vague，这四种情况 answer 用 X。每题返回一次，只输出JSON。
 资料：
 {source}
 待答题目：{json.dumps(tasks, ensure_ascii=False, separators=(',', ':'))}'''
-    schema = {'type': 'object', 'properties': {'reviews': {
-        'type': 'array', 'minItems': len(tasks), 'maxItems': len(tasks),
-        'items': Review.model_json_schema()}}, 'required': ['reviews'], 'additionalProperties': False}
-    response = requests.post(validator.OLLAMA_URL, json={
-        'model': validator.REVIEW_MODEL, 'messages': [{'role': 'user', 'content': prompt}],
-        'format': schema, 'stream': False, 'think': False,
-        'options': {'temperature': 0, 'num_ctx': 4096, 'num_predict': 256},
-    }, timeout=(10, validator.REVIEW_TIMEOUT))
+    schema = {
+        'type': 'object',
+        'properties': {
+            'reviews': {
+                'type': 'array',
+                'minItems': len(tasks),
+                'maxItems': len(tasks),
+                'items': Review.model_json_schema(),
+            }
+        },
+        'required': ['reviews'],
+        'additionalProperties': False,
+    }
+    response = requests.post(
+        validator.OLLAMA_URL,
+        json={
+            'model': validator.REVIEW_MODEL,
+            'messages': [{'role': 'user', 'content': prompt}],
+            'format': schema,
+            'stream': False,
+            'think': False,
+            'options': {'temperature': 0, 'num_ctx': 4096, 'num_predict': 256},
+        },
+        timeout=(10, validator.REVIEW_TIMEOUT),
+    )
     validator.checked_model_response(response, validator.REVIEW_MODEL)
     result = response.json()
     if validator.AUDIT:
@@ -98,7 +128,11 @@ def validate_questions(questions, source, previous):
         generic = GENERIC_ANSWER.fullmatch(answer)
         if leaks_answer(q['question'], q['options'][q['answer']]):
             reasons.append('题干直接包含正确选项，泄露答案')
-        elif generic and generic[1] in stem and re.search(r'什么方式|哪种方式|方式是什么|属于哪(?:种|类)', stem):
+        elif (
+            generic
+            and generic[1] in stem
+            and re.search(r'什么方式|哪种方式|方式是什么|属于哪(?:种|类)', stem)
+        ):
             reasons.append('正确选项只是复述题干中的类别名称，缺少可区分的考点')
         elif not (quote := resolve_evidence(q, units)):
             reasons.append('出题时缺少可定位的完整原文依据')
@@ -162,11 +196,25 @@ def validate_questions(questions, source, previous):
             elif quote in evidence_used or validator.find_near_duplicate(q['question'], passed):
                 reasons.append('与已保留题目重复考查同一证据或题意')
         if reasons:
-            rejected.append({'indexInPart': ident, 'question': q if isinstance(q, dict) else repr(q),
-                             'reasons': reasons, 'status': 'rejected_or_needs_review'})
+            rejected.append(
+                {
+                    'indexInPart': ident,
+                    'question': q if isinstance(q, dict) else repr(q),
+                    'reasons': reasons,
+                    'status': 'rejected_or_needs_review',
+                }
+            )
             continue
         evidence_used.add(quote)
-        passed.append(dict(q, explanation=quote, evidenceQuote=quote, reviewStatus='auto_prechecked',
-                           reviewMethod=method, reviewModel=validator.REVIEW_MODEL if method == 'batch_indexed_v1' else method,
-                           explanationModel='indexed_source_v1'))
+        passed.append(
+            dict(
+                q,
+                explanation=quote,
+                evidenceQuote=quote,
+                reviewStatus='auto_prechecked',
+                reviewMethod=method,
+                reviewModel=validator.REVIEW_MODEL if method == 'batch_indexed_v1' else method,
+                explanationModel='indexed_source_v1',
+            )
+        )
     return passed, rejected
