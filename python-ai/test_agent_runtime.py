@@ -60,3 +60,16 @@ def test_failures_do_not_expose_source_in_events():
     assert result["status"] == "failed"
     assert TEXT not in str(result["events"])
     assert TEXT not in result["error"]
+
+def test_zh06_eval_contract_and_unmeasured_quality():
+    """CI smoke test of the quality harness; no model or network involved."""
+    from evaluation.zh06 import build_report, case_prompt, load_cases
+
+    cases = load_cases()
+    assert [case["id"] for case in cases] == list(range(1, 21))
+    assert sum(case["negative"] for case in cases) == 1
+    assert "拒绝" not in case_prompt(cases[-1])  # Never give the model the expected verdict.
+    empty = build_report({}, {})
+    assert empty["humanUsability"]["rate"] is None
+    assert empty["factualCorrectness"]["denominator"] == 0
+    assert empty["medianTaskWallMs"] is None
