@@ -84,6 +84,8 @@ from evaluation.test_zh06 import (  # noqa: F401
     test_suite_fails_closed_on_missing_or_duplicate_questions,
     test_live_runner_rejects_non_loopback_or_ambiguous_urls,
     test_live_runner_accepts_explicit_loopback,
+    test_local_redirects_are_rejected_without_following,
+    test_source_revision_is_optional_but_not_a_fabricated_hash,
     test_review_denominators_ignore_missing_and_unjudged,
     test_empty_artifacts_produce_null_rates_without_fake_scores,
     test_manual_csv_is_not_overwritten,
