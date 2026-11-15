@@ -23,5 +23,8 @@
 /local.properties
 /phone-services.local.properties
 
-# Local ZH-06 artifacts may contain uploaded source excerpts and model outputs.
+# Local ZH-06 artifacts may include uploaded sources, model outputs and private session data.
 /artifacts/zh06-eval/
+/artifacts/zh06-runtime/
+/artifacts/zh06-server/
+/artifacts/zh06-server.zip
