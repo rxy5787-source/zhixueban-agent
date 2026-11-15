@@ -166,6 +166,7 @@ def run_live(args, cases) -> None:
     import requests
 
     session = requests.Session()
+    session.trust_env = False  # Never route a loopback evaluation through env proxies.
     session.headers.update({"Origin": origin})
     homepage = checked_local_response(session.get(
         origin + "/", timeout=20, allow_redirects=False,
