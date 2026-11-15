@@ -13,6 +13,7 @@ import json
 import mimetypes
 import re
 import statistics
+import subprocess
 import sys
 import time
 import uuid
@@ -131,6 +132,27 @@ def write_json(path: Path, data) -> None:
     temporary.replace(path)
 
 
+def code_revision() -> str | None:
+    """Record a reproducible source revision without changing the checkout."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(ROOT), "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=5, check=True,
+        )
+        value = result.stdout.strip()
+        return value if re.fullmatch(r"[0-9a-f]{40}", value) else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def checked_local_response(response):
+    """Do not follow a redirect to a nonlocal host from a nominal loopback URL."""
+    if 300 <= response.status_code < 400:
+        raise RuntimeError("Local trial returned a redirect; refusing to follow it.")
+    response.raise_for_status()
+    return response
+
+
 def run_live(args, cases) -> None:
     if not args.confirm_live:
         raise ValueError("Model evaluation sends files and costs time. Add --confirm-live to execute.")
@@ -145,10 +167,18 @@ def run_live(args, cases) -> None:
 
     session = requests.Session()
     session.headers.update({"Origin": origin})
-    homepage = session.get(origin + "/", timeout=20)
-    homepage.raise_for_status()
+    homepage = checked_local_response(session.get(
+        origin + "/", timeout=20, allow_redirects=False,
+    ))
     if not session.cookies:
         raise RuntimeError("No trial session cookie. Use a local trial without invitation gate.")
+    health = checked_local_response(session.get(
+        origin + "/api/health", timeout=20, allow_redirects=False,
+    )).json()
+    if not isinstance(health, dict) or not health.get("generationReady"):
+        raise RuntimeError("Local Qwen model is not ready; check Ollama and AI_TEXT_MODEL.")
+    model = health.get("requiredTextModel") or health.get("textModel")
+    revision = code_revision()
     print(f"Live evaluation: {len(selected)} cases, local service {origin}")
     print("Only the configured local trial receives the source files. Do not use sensitive documents.")
     initialized = set()
@@ -156,11 +186,10 @@ def run_live(args, cases) -> None:
         group = case["group"]
         library = "zh06-system" if group == "system" else "zh06-sql"
         if library not in initialized:
-            created = session.put(
+            checked_local_response(session.put(
                 origin + "/api/libraries/" + library, json={"title": "ZH-06 " + group},
-                timeout=20,
-            )
-            created.raise_for_status()
+                timeout=20, allow_redirects=False,
+            ))
             initialized.add(library)
         source = paths[group]
         started_at = datetime.now(timezone.utc).isoformat()
@@ -172,6 +201,7 @@ def run_live(args, cases) -> None:
             "sourceSha256": hashlib.sha256(source.read_bytes()).hexdigest(),
             "requestSent": case_prompt(case),
             "runStartedUtc": started_at, "taskId": None,
+            "model": model, "codeRevision": revision,
             "runStatus": "not_submitted", "modelCallCount": None, "task": None,
         }
         try:
@@ -186,17 +216,19 @@ def run_live(args, cases) -> None:
                         "clientRequestId": uuid.uuid4().hex,
                     },
                     files={"files": (source.name, file, mimetypes.guess_type(source.name)[0] or "application/octet-stream")},
-                    timeout=(10, 90),
+                    timeout=(10, 90), allow_redirects=False,
                 )
-            response.raise_for_status()
+            checked_local_response(response)
             task_id = response.json()["taskId"]
             if not re.fullmatch(r"[0-9a-f]{32}", task_id):
                 raise ValueError("Unexpected task identifier in server receipt.")
             artifact["taskId"] = task_id
             deadline = time.monotonic() + args.timeout_seconds
             while True:
-                task_response = session.get(origin + "/api/generation-tasks/" + task_id, timeout=20)
-                task_response.raise_for_status()
+                task_response = checked_local_response(session.get(
+                    origin + "/api/generation-tasks/" + task_id,
+                    timeout=20, allow_redirects=False,
+                ))
                 task = task_response.json()
                 artifact["task"] = task
                 status = task.get("status")
