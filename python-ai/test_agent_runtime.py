@@ -73,3 +73,22 @@ def test_zh06_eval_contract_and_unmeasured_quality():
     assert empty["humanUsability"]["rate"] is None
     assert empty["factualCorrectness"]["denominator"] == 0
     assert empty["medianTaskWallMs"] is None
+
+# Expose the standalone ZH-06 suite to the established GitHub Agent CI target.
+# The repository's existing workflow selects this module explicitly; importing
+# these tests preserves their pytest fixtures and parameterization without
+# editing the GitHub workflow or silently dropping most evaluation coverage.
+from evaluation.test_zh06 import (  # noqa: F401
+    test_suite_exactly_matches_original_twenty_cases,
+    test_runtime_prompts_are_direct_questions_without_answer_key_leakage,
+    test_suite_fails_closed_on_missing_or_duplicate_questions,
+    test_live_runner_rejects_non_loopback_or_ambiguous_urls,
+    test_live_runner_accepts_explicit_loopback,
+    test_review_denominators_ignore_missing_and_unjudged,
+    test_empty_artifacts_produce_null_rates_without_fake_scores,
+    test_manual_csv_is_not_overwritten,
+    test_run_without_consent_does_not_open_network_or_files,
+    test_duplicate_run_case_cannot_be_silently_overwritten,
+    test_duplicate_review_ids_and_invalid_scores_are_rejected,
+    test_plan_cli_does_not_require_source_files,
+)
