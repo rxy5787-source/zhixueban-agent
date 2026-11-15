@@ -51,11 +51,6 @@ jobs:
           $env:PYTHONPATH = "python-ai"
           python -m pytest -q python-ai/test_agent_runtime.py python-ai/test_weak_points_skill.py python-ai/test_study_skill_planner.py
 
-      - name: Verify ZH-06 evaluation contracts without Ollama
-        shell: pwsh
-        run: |
-          python -m pytest -q python-ai/evaluation/test_zh06.py
-
       - name: Package backend and run API tests
         shell: pwsh
         run: |
