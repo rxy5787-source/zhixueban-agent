@@ -38,9 +38,17 @@ def ensure_execution_tables(db: sqlite3.Connection) -> None:
            client_request_id TEXT PRIMARY KEY,
            task_id TEXT NOT NULL,
            fingerprint TEXT NOT NULL,
-           created REAL NOT NULL
+           created REAL NOT NULL,
+           plan_action TEXT NOT NULL DEFAULT 'unknown'
         )"""
     )
+    # Existing deployments need an additive migration; never reset receipts.
+    existing = {row["name"] for row in db.execute("PRAGMA table_info(study_practice_dispatches)")}
+    if "plan_action" not in existing:
+        db.execute(
+            "ALTER TABLE study_practice_dispatches "
+            "ADD COLUMN plan_action TEXT NOT NULL DEFAULT 'unknown'"
+        )
 
 
 def sources_in_library(db: sqlite3.Connection, library_id: str) -> list[dict]:
@@ -191,8 +199,10 @@ def dispatch_confirmed_practice(
             )
             db.execute("INSERT INTO web_tasks VALUES(?,?)", (task_id, library_id))
             db.execute(
-                "INSERT INTO study_practice_dispatches VALUES(?,?,?,?)",
-                (body.clientRequestId, task_id, fingerprint, now),
+                """INSERT INTO study_practice_dispatches
+                   (client_request_id,task_id,fingerprint,created,plan_action)
+                   VALUES(?,?,?,?,?)""",
+                (body.clientRequestId, task_id, fingerprint, now, proposal["next_action"]),
             )
             return {"taskId": task_id, "status": "queued"}
 

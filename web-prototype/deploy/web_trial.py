@@ -27,6 +27,7 @@ from .trial_body_limit import RequestBodyLimit
 from . import resumable_uploads
 from .study_practice_executor import ConfirmedPractice, dispatch_confirmed_practice, ensure_execution_tables, study_proposal
 from .model_status import generation_readiness
+from .agent_evaluation import evaluate_library
 
 
 LOGGER = logging.getLogger(__name__)
@@ -309,6 +310,15 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
         return dispatch_confirmed_practice(
             spaces.get(ident), library_id, payload, generation_readiness,
         )
+
+    @app.get('/api/study-evaluation/{library_id}')
+    def study_evaluation(library_id: str, request: Request):
+        # No content, prompts, or user-selected database paths are returned.
+        ident = existing_space(request)
+        if ident is None or spaces.get(ident) is None:
+            raise HTTPException(401, '请先建立浏览器会话')
+        with spaces.get(ident).db() as db:
+            return evaluate_library(db, library_id)
 
     @app.get('/favicon.svg')
     def favicon():
