@@ -34,6 +34,45 @@ def create_exam(browser, library):
 
 
 
+
+def test_zh06_evaluation_question_types_reach_intended_worker_contract(tmp_path, monkeypatch):
+    """Actual trial route accepts four kinds; no Ollama or worker is started."""
+    import json
+    from backend import web_api
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    source = b'WHERE filters rows before grouping. HAVING filters grouped results. GROUP BY creates groups.'
+    cases = (
+        ('mnemonic', '请编口诀区分WHERE与HAVING', 'mnemonic'),
+        ('reply', '请根据SQL资料解释WHERE与HAVING的区别', 'reply'),
+        ('cloze', '请按资料填空：分组后筛选使用什么子句？', 'cloze'),
+        ('single_choice', '请生成一道关于HAVING的四选一单选题', None),
+        ('reply', '仅依据SQL资料说明TCP三次握手的序号如何变化，并标出原文依据。', 'reply'),
+    )
+    for kind, requirement, expected_study_kind in cases:
+        visitor = client(app)
+        assert visitor.get('/').status_code == 200
+        assert visitor.put('/api/libraries/evalsql', headers={'Origin': ORIGIN},
+                           json={'title': 'SQL evaluation'}).status_code == 200
+        answer = visitor.post('/api/generation-tasks',
+            headers={'Origin': ORIGIN},
+            data={
+                'libraryId': 'evalsql', 'libraryName': 'SQL evaluation',
+                'requirements': requirement, 'questionCount': '1',
+                'questionType': kind,
+            },
+            files={'files': ('sql.txt', source, 'text/plain')})
+        assert answer.status_code == 202, (kind, answer.text)
+        with browser_store(tmp_path, visitor).db() as db:
+            job = db.execute('SELECT request FROM jobs WHERE id=?',
+                             (answer.json()['taskId'],)).fetchone()
+        request = json.loads(job['request'])
+        assert request['requirements'] == requirement
+        assert request['questionCount'] == 1
+        assert request.get('studyKind') == expected_study_kind
+        assert request['requireModelGeneration'] is True
+
+
 def test_study_plan_requires_session_and_an_existing_library(tmp_path):
     app = app_at(tmp_path)
     visitor = client(app)
