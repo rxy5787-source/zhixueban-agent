@@ -24,6 +24,22 @@ import handbookBook from './assets/handbook/brand-book.svg'
 import handbookClock from './assets/handbook/clock.svg'
 
 type Route = { destination: Destination; libraryId?: string; taskId?: string; practicing?: boolean }
+type AgentEvaluation = {
+  sampleCount: number
+  summary: {
+    terminalCount: number
+    succeededCount: number
+    partialCount: number
+    pendingCount: number
+    completedRate: number | null
+    measuredGeneratedCandidates: number
+    measuredAutoAccepted: number
+    autoAcceptanceRatio: number | null
+    averageTerminalWallTimeMs: number | null
+  }
+  runs: { taskId: string; status: string; planAction: string; retryEvents: number;
+    generatedCandidates: number | null; autoAcceptedCount: number | null }[]
+}
 type StudyProposal = {
   next_action: 'prepare_diagnostic' | 'prepare_targeted_practice' | 'prepare_review'
   topics: string[]
@@ -135,6 +151,10 @@ export function App() {
   const [studyPlan,setStudyPlan] = useState<{path:string;data?:StudyProposal;error?:string} | null>(null)
   const currentPlan=studyPlan?.path===planPath ? studyPlan : null
   const [planSourceId,setPlanSourceId] = useState('')
+  const evalPath=panel?.type==='analysis' && panel.libraryId
+    ? `/api/study-evaluation/${encodeURIComponent(panel.libraryId)}` : ''
+  const [evalData,setEvalData]=useState<{path:string;data?:AgentEvaluation;error?:string} | null>(null)
+  const currentEval=evalData?.path===evalPath ? evalData : null
   const [executingPlan,setExecutingPlan] = useState(false)
   const [executeError,setExecuteError] = useState('')
   const [planCount,setPlanCount] = useState(3)
@@ -162,6 +182,16 @@ export function App() {
     })
     return ()=>controller.abort()
   },[planPath])
+  useEffect(()=>{
+    if(!evalPath){setEvalData(null);return}
+    const controller=new AbortController()
+    api<AgentEvaluation>(evalPath,{signal:controller.signal}).then(data=>{
+      if(!controller.signal.aborted)setEvalData({path:evalPath,data})
+    }).catch(error=>{
+      if(!controller.signal.aborted)setEvalData({path:evalPath,error:error instanceof Error ? error.message : '暂时无法读取执行评测'})
+    })
+    return ()=>controller.abort()
+  },[evalPath,completedTasks])
   const close = useCallback(() => setPanel(null), [])
   useEffect(() => {
     function sync() {
@@ -518,6 +548,22 @@ export function App() {
                </button>
              </> : <p className="supporting">这个知识库还没有可复用的原始资料，请先返回首页上传资料。</p>}
            </>}
+         </section>}
+         {panel.type === 'analysis' && evalPath && <section aria-label="Agent执行评测">
+           <h3>Agent执行评测</h3>
+           <p className="supporting">仅统计当前知识库由Agent确认创建的任务；自动初筛不等于答案正确率。</p>
+           {!currentEval && <p className="supporting" role="status">正在读取执行记录…</p>}
+           {currentEval?.error && <p className="field-error" role="alert">{currentEval.error}</p>}
+           {currentEval?.data && (currentEval.data.sampleCount===0
+             ? <p className="supporting">还没有已执行的Agent复习任务，暂无可统计数据。</p>
+             : <div className="supporting">
+               <p>最近样本：{currentEval.data.sampleCount}次；终态任务：{currentEval.data.summary.terminalCount}次；
+                 成功或部分完成：{currentEval.data.summary.succeededCount+currentEval.data.summary.partialCount}次。</p>
+               <p>终态完成比例：{currentEval.data.summary.completedRate===null ? '暂无' : `${Math.round(currentEval.data.summary.completedRate*100)}%`}</p>
+               <p>自动初筛接纳比例：{currentEval.data.summary.autoAcceptanceRatio===null ? '暂无可比候选记录' : `${Math.round(currentEval.data.summary.autoAcceptanceRatio*100)}%`}</p>
+               <p>已记录候选：{currentEval.data.summary.measuredGeneratedCandidates}，自动接纳：{currentEval.data.summary.measuredAutoAccepted}；并非人工可用率。</p>
+               <p>终态平均总耗时：{currentEval.data.summary.averageTerminalWallTimeMs===null ? '暂无' : `${(currentEval.data.summary.averageTerminalWallTimeMs/1000).toFixed(1)}秒`}</p>
+             </div>)}
          </section>}
          {panel.type === 'overview' && <><p className="sheet-description">总览入口留在“我的”。具体知识点与学习建议，回到对应知识库查看。</p><div className="overview-libraries">{libraries.map(library => <button key={library.id} onClick={() => { navigate('libraries', library.id) }}><span className={`target-mark cover-${library.color}`}>{library.mark}</span><span><strong>{library.title}</strong><small>进入知识库查看学习分析</small></span><Icon name="chevron" size={16}/></button>)}</div><p className="prototype-note">当前不展示未经计算的掌握概率或整体学习结论。</p></>}
         {panel.type === 'settings' && <><p className="sheet-description">让学习空间保持简单、清晰。</p><div className="settings-row"><span>外观</span><strong>手帐风 · 暖白与苔绿</strong></div><div className="settings-row"><span>学习数据</span><strong>{onlineTrial ? '保存在试用服务器' : '保存在本机'}</strong></div><p className="supporting">昵称与学习偏好保存在当前浏览器，练习记录来自当前学习空间。</p><button className="secondary-button" onClick={()=>setPanel({type:'demo'})}>使用说明</button><button className="secondary-button reset-demo" onClick={resetDemo}>清空出题草稿</button></>}
