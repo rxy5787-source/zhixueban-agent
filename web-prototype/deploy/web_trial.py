@@ -30,6 +30,7 @@ from .study_practice_executor import ConfirmedPractice, dispatch_confirmed_pract
 from .model_status import generation_readiness
 from .agent_evaluation import evaluate_library
 from .agent_recovery_policy import advise_recovery
+from .web_content import OWNER
 
 
 LOGGER = logging.getLogger(__name__)
