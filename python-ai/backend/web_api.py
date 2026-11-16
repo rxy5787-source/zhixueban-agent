@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import time
 import uuid
 from typing import Literal
@@ -19,6 +20,7 @@ from .content_exporter import result_bundle
 from .file_storage import validate_file
 from .model_status import generation_readiness
 from .practice_quality import standalone_issue
+from .retry_guard import install_retry_guard, RETRY_DEPTH_ERROR
 from .schemas import JobRequest
 from .worker import Runner
 from .web_content import OWNER, WebStore, archive_questions, candidates, eligible, is_library_deleted, questions, removed_items, visible_questions
@@ -42,6 +44,7 @@ def init_web_tables():
         CREATE TABLE IF NOT EXISTS web_questions(question_id TEXT NOT NULL,library_id TEXT NOT NULL,task_id TEXT NOT NULL,payload TEXT NOT NULL,saved REAL NOT NULL,PRIMARY KEY(library_id,question_id));
         ''')
         web_practice.init_tables(db)
+        install_retry_guard(db)
 init_web_tables()
 
 @asynccontextmanager
@@ -55,6 +58,12 @@ async def lifespan(app):
 
 app = FastAPI(title='知学伴本机 Web 出题接口',lifespan=lifespan)
 app.add_middleware(TrustedHostMiddleware,allowed_hosts=['127.0.0.1','localhost','testserver'])
+
+@app.exception_handler(sqlite3.IntegrityError)
+async def retry_limit_conflict(request, error):
+    if str(error) == RETRY_DEPTH_ERROR:
+        return JSONResponse({'detail': '每份任务最多允许一次人工重试，请检查失败原因。'}, status_code=409)
+    return JSONResponse({'detail': '学习数据暂时无法保存，请稍后重试。'}, status_code=500)
 ALLOWED_ORIGINS = {f'http://{host}:{port}' for host in ('127.0.0.1','localhost') for port in (5173,4173,8091)}
 
 @app.middleware('http')
