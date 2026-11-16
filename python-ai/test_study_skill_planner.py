@@ -105,3 +105,22 @@ def test_study_replay_detects_forged_choices_and_evidence():
     altered = deepcopy(trace)
     altered["decisions"].pop()
     assert replay_study_trace(altered)["reason"] == "incomplete_trace"
+
+
+def test_study_replay_rejects_cross_step_evidence_mutation():
+    from copy import deepcopy
+    from backend.agent_decision_audit import replay_study_trace
+
+    trace = plan_study_from_progress([point("HAVING", 5, 2, .2)]).decision_trace
+    assert replay_study_trace(trace)["matched"] is True
+
+    forged = deepcopy(trace)
+    forged["decisions"][2]["features"]["weakPointCount"] = 0
+    assert replay_study_trace(forged) == {
+        "matched": False, "divergentStep": 3,
+        "reason": "inconsistent_state_transition",
+    }
+
+    forged = deepcopy(trace)
+    forged["decisions"][0]["features"]["planPresent"] = True
+    assert replay_study_trace(forged)["reason"] == "invalid_initial_state"
