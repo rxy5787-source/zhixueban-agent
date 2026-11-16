@@ -529,3 +529,50 @@ def test_concurrent_retries_and_repeated_archiving_are_idempotent(tmp_path):
     with store.db() as db:
         assert db.execute('SELECT question_id FROM web_questions WHERE library_id=? ORDER BY question_id',
                           ('recovery',)).fetchall() == saved
+
+
+def test_phase33_plan_refreshes_from_authorized_progress_without_database_writes(tmp_path):
+    """BKT evidence changes should update advice only within its owner's space."""
+    app = app_at(tmp_path)
+    learner, other = client(app), client(app)
+    learner.get('/')
+    other.get('/')
+    headers = {'Origin': ORIGIN}
+    for browser in (learner, other):
+        assert browser.put('/api/libraries/sql', headers=headers,
+                           json={'title': 'SQL'}).status_code == 200
+
+    route = '/api/study-plans/sql'
+    assert learner.get(route).json()['next_action'] == 'prepare_diagnostic'
+    assert other.get(route).json()['next_action'] == 'prepare_diagnostic'
+
+    with browser_store(tmp_path, learner).db() as db:
+        db.execute("""INSERT INTO web_point_progress
+            (library_id, point_key, label, mastery, attempts, correct)
+            VALUES ('sql', 'having', 'HAVING', 0.20, 5, 1)""")
+
+    def snapshot(browser):
+        with browser_store(tmp_path, browser).db() as db:
+            return tuple(tuple(row) for row in db.execute(
+                'SELECT * FROM web_point_progress ORDER BY point_key'
+            ))
+
+    original = snapshot(learner)
+    response = learner.get(route)
+    assert response.status_code == 200
+    assert response.json()['next_action'] == 'prepare_targeted_practice'
+    assert response.json()['topics'] == ['HAVING']
+    assert snapshot(learner) == original
+    assert other.get(route).json()['next_action'] == 'prepare_diagnostic'
+
+    with browser_store(tmp_path, learner).db() as db:
+        db.execute("""UPDATE web_point_progress SET mastery = 0.9, correct = 5
+                      WHERE library_id = 'sql' AND point_key = 'having'""")
+    updated = snapshot(learner)
+    assert learner.get(route).json()['next_action'] == 'prepare_review'
+    assert snapshot(learner) == updated
+
+    restored = client(app_at(tmp_path))
+    restored.cookies.set(COOKIE, learner.cookies[COOKIE])
+    assert restored.get(route).json()['next_action'] == 'prepare_review'
+    assert other.get(route).json()['next_action'] == 'prepare_diagnostic'
