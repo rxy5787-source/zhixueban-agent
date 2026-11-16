@@ -1,0 +1,99 @@
+name: Android CI (build and JVM checks)
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/android-ci.yml'
+      - 'app/**'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - 'gradle.properties'
+      - 'settings.gradle.kts'
+      - 'build.gradle.kts'
+      - 'auth-server/**'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/android-ci.yml'
+      - 'app/**'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - 'gradle.properties'
+      - 'settings.gradle.kts'
+      - 'build.gradle.kts'
+      - 'auth-server/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-offdevice:
+    name: Compile Debug APK and run JVM unit tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CI: 'true'
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Prepare Android SDK
+        uses: android-actions/setup-android@v4
+
+      - name: Install required SDK 36.1 and Build Tools 36
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager --install 'platforms;android-36.1' 'build-tools;36.0.0'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: true
+
+      - name: Build debug app and execute Android JVM tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --stacktrace :app:assembleDebug :app:testDebugUnitTest
+
+      - name: Verify APK and unit test artifacts exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s app/build/outputs/apk/debug/app-debug.apk
+          test -d app/build/test-results/testDebugUnitTest
+          find app/build/test-results/testDebugUnitTest -name 'TEST-*.xml' -print -quit | grep -q .
+
+      - name: Upload debug APK (internal testing only)
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhixueban-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload test and build reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhixueban-android-ci-report
+          path: |
+            app/build/test-results/testDebugUnitTest/
+            app/build/reports/tests/testDebugUnitTest/
+          if-no-files-found: warn
+          retention-days: 14
