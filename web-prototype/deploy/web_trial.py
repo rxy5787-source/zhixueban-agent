@@ -22,6 +22,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .job_store import Store
+from .job_timing import timing_report
 from .web_api import WebStore, init_web_tables, request_store_override, routes
 from .worker import Runner
 from .trial_body_limit import RequestBodyLimit
@@ -394,6 +395,35 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
                 retry_depth=depth,
                 source_available=sources_ok,
             )
+
+    @app.get('/api/generation-tasks/{task_id}/timing')
+    def task_stage_timing(task_id: str, request: Request):
+        """Read-only allowlisted timing report for the signed browser space."""
+        ident = existing_space(request)
+        current = spaces.get(ident) if ident is not None else None
+        if current is None:
+            raise HTTPException(401, '请先建立浏览器会话')
+        with current.db() as db:
+            job = db.execute(
+                """SELECT j.id,j.state,j.created,j.updated FROM jobs j
+                   JOIN web_tasks t ON t.task_id=j.id
+                   WHERE j.id=? AND j.owner=?""",
+                (task_id, OWNER),
+            ).fetchone()
+            if job is None:
+                raise HTTPException(404, '生成任务不存在')
+            events = [dict(row) for row in db.execute(
+                'SELECT state,stage,created FROM job_events WHERE job_id=? ORDER BY id',
+                (task_id,),
+            )]
+            metric = db.execute(
+                'SELECT callback_elapsed_ms FROM job_archive_metrics WHERE job_id=?',
+                (task_id,),
+            ).fetchone()
+        return timing_report(
+            dict(job), events,
+            metric['callback_elapsed_ms'] if metric else None,
+        )
 
     @app.get('/api/study-evaluation/{library_id}')
     def study_evaluation(library_id: str, request: Request):
