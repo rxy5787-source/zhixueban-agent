@@ -160,6 +160,11 @@ def test_study_plan_uses_only_verified_browser_space_and_never_writes(tmp_path):
     assert result_alice.json()['topics'] == ['HAVING']
     assert result_bob.json()['next_action'] == 'prepare_review'
     assert result_bob.json()['topics'] == []
+    from backend.agent_decision_audit import replay_study_trace
+    for response in (result_alice, result_bob):
+        assert replay_study_trace(response.json()['decision_trace'])['matched'] is True
+        assert 'HAVING' not in str(response.json()['decision_trace'])
+        assert 'WHERE' not in str(response.json()['decision_trace'])
     assert snapshot(alice) == before_alice
     assert snapshot(bob) == before_bob
 
@@ -568,6 +573,9 @@ def test_agent_recovery_advice_is_scoped_read_only_and_bounded(tmp_path, monkeyp
     assert data['requiresHumanConfirmation'] is True
     assert data['willExecuteAutomatically'] is False
     assert data['remainingSuggestedRetries'] == 1
+    from backend.agent_decision_audit import replay_recovery_trace
+    assert replay_recovery_trace(data['decisionTrace'])['matched'] is True
+    assert sensitive not in str(data['decisionTrace'])
     assert sensitive not in advised.text
     assert data['existingRetryTaskId'] is None
     with store.db() as db:
@@ -589,6 +597,7 @@ def test_agent_recovery_advice_is_scoped_read_only_and_bounded(tmp_path, monkeyp
     newer = alice.get(f'/api/generation-tasks/{retry_id}/recovery-advice').json()
     assert newer['nextAction'] == 'manual_quality_review'
     assert newer['remainingSuggestedRetries'] == 0
+    assert replay_recovery_trace(newer['decisionTrace'])['matched'] is True
     assert bob.get(f'/api/generation-tasks/{retry_id}/recovery-advice').status_code == 404
 
 
