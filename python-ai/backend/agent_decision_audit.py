@@ -175,6 +175,7 @@ def replay_study_trace(trace: dict, planner=None) -> dict:
                 or type(f["weakResultPresent"]) is not bool
                 or type(f["planPresent"]) is not bool
                 or not _bounded_int(f["weakPointCount"], 0, 5)
+                or (f["weakStatus"] is not None and not isinstance(f["weakStatus"], str))
                 or (f["weakStatus"] is not None and f["weakStatus"] not in STUDY_STATUSES)
                 or (not f["weakResultPresent"] and (f["weakStatus"] is not None or f["weakPointCount"] != 0))
                 or (f["weakResultPresent"] and f["weakStatus"] is None)):
@@ -204,7 +205,10 @@ def replay_recovery_trace(trace: dict) -> dict:
     f = trace["features"]
     if (not isinstance(f, dict) or set(f) != {
             "taskStatus", "acceptedCount", "failureCategory", "existingRetry",
-            "retryDepth", "sourceAvailable"} or f["taskStatus"] not in RECOVERY_STATES
+            "retryDepth", "sourceAvailable"}
+            or not isinstance(f["taskStatus"], str)
+            or f["taskStatus"] not in RECOVERY_STATES
+            or (f["failureCategory"] is not None and not isinstance(f["failureCategory"], str))
             or f["failureCategory"] not in RECOVERY_CATEGORIES | {None}
             or not _bounded_int(f["acceptedCount"]) or not _bounded_int(f["retryDepth"], 0, 2)
             or type(f["existingRetry"]) is not bool
