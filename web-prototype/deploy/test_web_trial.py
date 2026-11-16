@@ -154,9 +154,11 @@ def test_zh07_concurrent_visitors_submit_and_single_worker_fifo(tmp_path, monkey
         assert browser.get('/').status_code == 200
 
     barrier = threading.Barrier(visitors)
-    def submit(index):
+    request_ids = [uuid4().hex for _ in range(visitors)]
+    def submit(index, *, burst=True):
         browser = browsers[index]
-        barrier.wait(timeout=20)
+        if burst:
+            barrier.wait(timeout=20)
         reply = browser.post(
             '/api/generation-tasks',
             headers={'Origin': ORIGIN},
@@ -168,7 +170,7 @@ def test_zh07_concurrent_visitors_submit_and_single_worker_fifo(tmp_path, monkey
                 'libraryName': 'SQL',
                 'questionCount': '1',
                 'requirements': 'Test WHERE and HAVING.',
-                'clientRequestId': uuid4().hex,
+                'clientRequestId': request_ids[index],
             },
         )
         return reply
@@ -178,6 +180,17 @@ def test_zh07_concurrent_visitors_submit_and_single_worker_fifo(tmp_path, monkey
     with concurrent.futures.ThreadPoolExecutor(max_workers=visitors) as pool:
         responses = list(pool.map(submit, range(visitors)))
     ingress_ms = round(1000 * (time.perf_counter() - start))
+    # RequestBodyLimit has four upload slots. At burst=5 a fifth upload
+    # may get 429 (backpressure). Retry that same submission *after* burst,
+    # preserving its idempotency token and never raising the slot limit.
+    transient_429 = sum(reply.status_code == 429 for reply in responses)
+    assert all(reply.status_code in (202, 429) for reply in responses), [
+        (reply.status_code, reply.text[:220]) for reply in responses
+    ]
+    for index, reply in enumerate(responses):
+        if reply.status_code == 429:
+            assert '当前上传较多' in reply.text
+            responses[index] = submit(index, burst=False)
     assert all(reply.status_code == 202 for reply in responses), [
         (reply.status_code, reply.text[:220]) for reply in responses
     ]
@@ -226,7 +239,8 @@ def test_zh07_concurrent_visitors_submit_and_single_worker_fifo(tmp_path, monkey
     # Measured value is the API ingress of *this CI simulator*, not inferred
     # Qwen throughput. All payloads are fixed fixtures.
     print(f'ZH07_OFFDEVICE visitors={visitors} concurrent_ingress_ms={ingress_ms} '
-          f'accepted={len(ids)} simulated_terminal={len(claimed)} model_calls=0')
+          f'upload_backpressure_429={transient_429} accepted_after_retry={len(ids)} '
+          f'simulated_terminal={len(claimed)} model_calls=0')
 
 
 def test_zh07_single_space_concurrent_submissions_admit_at_most_one(tmp_path, monkeypatch):
@@ -258,7 +272,21 @@ def test_zh07_single_space_concurrent_submissions_admit_at_most_one(tmp_path, mo
         responses = list(pool.map(submit, range(len(siblings))))
     codes = [reply.status_code for reply in responses]
     assert codes.count(202) == 1, [(r.status_code, r.text[:150]) for r in responses]
-    assert codes.count(409) == 4, codes
+    # Burst uploads may hit the bounded request-body slots (429) before
+    # reaching the per-space active-job check (409).
+    assert all(status in (202, 409, 429) for status in codes), codes
+    for index, status in enumerate(codes):
+        if status == 429:
+            # Once upload slots are free, the same visitor hits the 409
+            # per-space queue policy, not a second accepted job.
+            retry = siblings[index].post(
+                '/api/generation-tasks', headers={'Origin': ORIGIN},
+                files={'files': ('retry.txt', b'WHERE filters rows.', 'text/plain')},
+                data={'libraryId': 'shared', 'libraryName': 'SQL',
+                      'questionCount': '1', 'requirements': 'WHERE',
+                      'clientRequestId': uuid4().hex},
+            )
+            assert retry.status_code == 409, retry.text
     with browser_store(tmp_path, master).db() as db:
         assert db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0] == 1
         assert db.execute("SELECT COUNT(*) FROM jobs WHERE state='queued'").fetchone()[0] == 1
