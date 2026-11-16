@@ -89,7 +89,7 @@ class Store:
             if result is not None:
                 started_ns=time.perf_counter_ns()
                 self.publish_result(db,ident,state,result,now)
-                if state in ('succeeded', 'partial'):
+                if state in ('succeeded', 'partial') and type(self).publish_result is not Store.publish_result:
                     callback_ms=max(0, (time.perf_counter_ns()-started_ns)//1_000_000)
                     db.execute("""INSERT INTO job_archive_metrics(job_id,callback_elapsed_ms,created)
                         VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE
