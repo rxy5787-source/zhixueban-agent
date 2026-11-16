@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import hashlib
 import hmac
 import ipaddress
+import json
 import logging
 import os
 from pathlib import Path
@@ -28,6 +29,7 @@ from . import resumable_uploads
 from .study_practice_executor import ConfirmedPractice, dispatch_confirmed_practice, ensure_execution_tables, study_proposal
 from .model_status import generation_readiness
 from .agent_evaluation import evaluate_library
+from .agent_recovery_policy import advise_recovery
 
 
 LOGGER = logging.getLogger(__name__)
@@ -321,6 +323,108 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
         return dispatch_confirmed_practice(
             spaces.get(ident), library_id, payload, generation_readiness,
         )
+
+    @app.get('/api/generation-tasks/{task_id}/recovery-advice')
+    def recovery_advice(task_id: str, request: Request):
+        # Browser session selects the isolated task store; job ID is NOT a token.
+        ident = existing_space(request)
+        current = spaces.get(ident) if ident is not None else None
+        if current is None:
+            raise HTTPException(401, '请先建立浏览器会话')
+        with current.db() as db:
+            row = db.execute(
+                """SELECT j.id, j.state, j.result, j.request
+                   FROM jobs AS j JOIN web_tasks AS t ON t.task_id=j.id
+                   WHERE j.id=? AND j.owner=?""",
+                (task_id, OWNER),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(404, '生成任务不存在')
+            # Walk trusted retry links backwards. Never accept a client-provided
+            # retry count; a cycle or excessive depth fails closed.
+            depth, cursor, seen = 0, task_id, {task_id}
+            for _ in range(16):
+                parent = db.execute(
+                    """SELECT r.original_id FROM web_task_retries AS r
+                       JOIN jobs AS j ON j.id=r.original_id AND j.owner=?
+                       JOIN web_tasks AS t ON t.task_id=j.id
+                       WHERE r.retry_id=?""",
+                    (OWNER, cursor),
+                ).fetchone()
+                if parent is None:
+                    break
+                cursor = parent['original_id']
+                if cursor in seen:
+                    raise HTTPException(409, '任务重试链异常，暂停恢复建议')
+                depth += 1
+                seen.add(cursor)
+            else:
+                raise HTTPException(409, '重试链过长，暂停恢复建议')
+
+            existing = db.execute(
+                """SELECT j.id FROM web_task_retries r
+                   JOIN jobs j ON j.id=r.retry_id AND j.owner=?
+                   JOIN web_tasks t ON t.task_id=j.id
+                   WHERE r.original_id=?""",
+                (OWNER, task_id),
+            ).fetchone()
+            request_body = json.loads(row['request'])
+            source_ids = request_body.get('fileIds', [])
+            sources_ok = isinstance(source_ids, list) and bool(source_ids)
+            if sources_ok:
+                for file_id in source_ids:
+                    source = db.execute(
+                        'SELECT path FROM files WHERE id=? AND owner=?',
+                        (file_id, OWNER),
+                    ).fetchone()
+                    if source is None or not Path(source['path']).is_file():
+                        sources_ok = False
+                        break
+            if sources_ok:
+                source_removed = db.execute(
+                    """SELECT 1 FROM web_removed_items r
+                       JOIN web_tasks t ON t.library_id=r.library_id
+                       WHERE t.task_id=? AND r.kind='source'
+                         AND r.item_id IN (
+                           SELECT value FROM json_each(?, '    def study_evaluation(library_id: str, request: Request):
+        # No content, prompts, or user-selected database paths are returned.
+        ident = existing_space(request)
+        if ident is None or spaces.get(ident) is None:
+            raise HTTPException(401, '请先建立浏览器会话')
+        with spaces.get(ident).db() as db:
+            return evaluate_library(db, library_id)
+
+    @app.get('/favicon.svg')
+    def favicon():
+        return FileResponse(frontend / 'favicon.svg')
+
+    app.mount('/assets', StaticFiles(directory=frontend / 'assets'), name='assets')
+    app.include_router(routes)
+    app.include_router(resumable_uploads.router)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=[url.hostname])
+    return app
+
+
+def from_environment():
+    return create_app(Path(os.environ['TRIAL_DATA_DIR']).resolve(),
+                      Path(os.environ['TRIAL_FRONTEND_DIR']).resolve(),
+                      os.environ['TRIAL_PUBLIC_ORIGIN'], os.environ['TRIAL_SECRET'],
+                      int(os.environ.get('TRIAL_MAX_SPACES', '32')),
+                      access_code=os.environ.get('TRIAL_ACCESS_CODE'),
+                      trust_cloudflare_headers=os.environ.get('TRIAL_CLOUDFLARE_PROXY') == '1',
+                      local_preview=os.environ.get('TRIAL_LOCAL_PREVIEW') == '1')
+)
+                         ) LIMIT 1""",
+                    (task_id, json.dumps(source_ids)),
+                ).fetchone()
+                sources_ok = source_removed is None
+            return advise_recovery(
+                {'id': row['id'], 'state': row['state'],
+                 'result': json.loads(row['result'])},
+                existing_retry_id=existing['id'] if existing else None,
+                retry_depth=depth,
+                source_available=sources_ok,
+            )
 
     @app.get('/api/study-evaluation/{library_id}')
     def study_evaluation(library_id: str, request: Request):
