@@ -219,6 +219,8 @@ def run_live(args, cases) -> None:
     cookies_file = args.output / ".local-trial.cookies"
     if cookies_file.is_symlink():
         raise RuntimeError("Refusing symlinked session credentials.")
+    if cookies_file.exists() and not args.resume:
+        raise RuntimeError("This evaluation directory has an existing session; use --resume or a new directory.")
     jar = MozillaCookieJar(str(cookies_file))
     if args.resume:
         if not cookies_file.is_file():
