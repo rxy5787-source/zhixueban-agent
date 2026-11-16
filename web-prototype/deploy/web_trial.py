@@ -327,22 +327,21 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
 
     @app.get('/api/generation-tasks/{task_id}/recovery-advice')
     def recovery_advice(task_id: str, request: Request):
-        # Browser session selects the isolated task store; job ID is NOT a token.
+        # Never allow a task ID to cross the signed visitor's data boundary.
         ident = existing_space(request)
         current = spaces.get(ident) if ident is not None else None
         if current is None:
             raise HTTPException(401, '请先建立浏览器会话')
         with current.db() as db:
             row = db.execute(
-                """SELECT j.id, j.state, j.result, j.request
+                """SELECT j.id, j.state, j.result, j.request, t.library_id
                    FROM jobs AS j JOIN web_tasks AS t ON t.task_id=j.id
                    WHERE j.id=? AND j.owner=?""",
                 (task_id, OWNER),
             ).fetchone()
             if row is None:
                 raise HTTPException(404, '生成任务不存在')
-            # Walk trusted retry links backwards. Never accept a client-provided
-            # retry count; a cycle or excessive depth fails closed.
+
             depth, cursor, seen = 0, task_id, {task_id}
             for _ in range(16):
                 parent = db.execute(
@@ -378,17 +377,25 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
                         'SELECT path FROM files WHERE id=? AND owner=?',
                         (file_id, OWNER),
                     ).fetchone()
-                    if source is None or not Path(source['path']).is_file():
+                    removed = db.execute(
+                        """SELECT 1 FROM web_removed_items
+                           WHERE library_id=? AND kind='source' AND item_id=?""",
+                        (row['library_id'], file_id),
+                    ).fetchone()
+                    if source is None or removed or not Path(source['path']).is_file():
                         sources_ok = False
                         break
-            if sources_ok:
-                source_removed = db.execute(
-                    """SELECT 1 FROM web_removed_items r
-                       JOIN web_tasks t ON t.library_id=r.library_id
-                       WHERE t.task_id=? AND r.kind='source'
-                         AND r.item_id IN (
-                           SELECT value FROM json_each(?, '    def study_evaluation(library_id: str, request: Request):
-        # No content, prompts, or user-selected database paths are returned.
+            return advise_recovery(
+                {'id': row['id'], 'state': row['state'],
+                 'result': json.loads(row['result'])},
+                existing_retry_id=existing['id'] if existing else None,
+                retry_depth=depth,
+                source_available=sources_ok,
+            )
+
+    @app.get('/api/study-evaluation/{library_id}')
+    def study_evaluation(library_id: str, request: Request):
+        # Read only metadata from the current signed browser session.
         ident = existing_space(request)
         if ident is None or spaces.get(ident) is None:
             raise HTTPException(401, '请先建立浏览器会话')
