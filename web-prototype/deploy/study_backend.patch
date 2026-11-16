@@ -13,11 +13,12 @@
  ROOT = Path(os.getenv('AI_WEB_DATA_DIR', str(config.ROOT / 'runtime' / 'web'))).resolve()
  store = WebStore(ROOT)
  runner = Runner(store)
-@@ -50,6 +50,7 @@
+@@ -50,7 +50,8 @@
          ''')
          web_practice.init_tables(db)
          web_submissions.init_tables(db)
 +        study_chat.init_tables(db)
+         install_retry_guard(db)
  init_web_tables()
  
  @asynccontextmanager

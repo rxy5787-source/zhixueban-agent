@@ -429,6 +429,116 @@ def test_agent_evaluation_migrates_existing_dispatch_receipts(tmp_path):
 
 
 
+
+def test_retry_hard_limit_is_atomic_and_preserves_first_receipt(tmp_path, monkeypatch):
+    import sqlite3
+    from backend.retry_guard import RETRY_DEPTH_ERROR
+    monkeypatch.setattr(web_api, 'generation_readiness',
+                        lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    browser, stranger = client(app), client(app)
+    original = submit_recovery_task(browser, library='sql')
+    stranger.get('/')
+    store = browser_store(tmp_path, browser)
+    store.update(original, 'failed', '模拟初次处理失败')
+    endpoint = f'/api/generation-tasks/{original}/retry'
+    first = browser.post(endpoint, headers={'Origin': ORIGIN})
+    assert first.status_code == 202, first.text
+    retry_id = first.json()['taskId']
+    assert retry_id != original
+    assert browser.post(endpoint, headers={'Origin': ORIGIN}).json() == first.json()
+    assert stranger.post(endpoint, headers={'Origin': ORIGIN}).status_code == 404
+    store.update(retry_id, 'failed', '模拟重试失败')
+    blocked = browser.post(
+        f'/api/generation-tasks/{retry_id}/retry', headers={'Origin': ORIGIN})
+    assert blocked.status_code == 409, blocked.text
+    assert '最多允许一次' in blocked.text
+    assert 'traceback' not in blocked.text.lower()
+    with store.db() as db:
+        assert db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0] == 2
+        links = db.execute(
+            'SELECT original_id,retry_id FROM web_task_retries').fetchall()
+        assert [(r['original_id'], r['retry_id']) for r in links] == [(original, retry_id)]
+        # Database guard cannot be bypassed by another write path.
+        with __import__('pytest').raises(sqlite3.IntegrityError, match=RETRY_DEPTH_ERROR):
+            db.execute(
+                'INSERT INTO web_task_retries VALUES(?,?)',
+                (retry_id, 'f'*32))
+        with __import__('pytest').raises(sqlite3.IntegrityError, match=RETRY_DEPTH_ERROR):
+            db.execute(
+                'INSERT INTO web_task_retries VALUES(?,?)',
+                ('c'*32, retry_id))
+    assert browser.get(
+        f'/api/generation-tasks/{retry_id}/recovery-advice'
+    ).json()['remainingSuggestedRetries'] == 0
+
+
+def test_retry_hard_limit_concurrent_clicks_reuse_one_task(tmp_path, monkeypatch):
+    monkeypatch.setattr(web_api, 'generation_readiness',
+                        lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    browser = client(app)
+    original = submit_recovery_task(browser, library='sql')
+    store = browser_store(tmp_path, browser)
+    store.update(original, 'failed', '模拟处理失败')
+    copies = [client(app) for _ in range(3)]
+    for copy in copies:
+        copy.cookies.update(browser.cookies)
+    def retry(connection):
+        return connection.post(
+            f'/api/generation-tasks/{original}/retry',
+            headers={'Origin': ORIGIN},
+        )
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        responses = list(pool.map(retry, copies))
+    assert all(r.status_code == 202 for r in responses), [
+        (r.status_code, r.text[:180]) for r in responses]
+    ids = {r.json()['taskId'] for r in responses}
+    assert len(ids) == 1
+    with store.db() as db:
+        assert db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0] == 2
+        assert db.execute('SELECT COUNT(*) FROM web_task_retries').fetchone()[0] == 1
+    retry_id = ids.pop()
+    store.update(retry_id, 'failed', '模拟二次失败')
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        rejected = list(pool.map(
+            lambda connection: connection.post(
+                f'/api/generation-tasks/{retry_id}/retry',
+                headers={'Origin': ORIGIN}),
+            copies))
+    assert all(response.status_code == 409 for response in rejected)
+    with store.db() as db:
+        assert db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0] == 2
+
+
+def test_retry_guard_survives_store_reopen(tmp_path, monkeypatch):
+    import sqlite3
+    monkeypatch.setattr(web_api, 'generation_readiness',
+                        lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    browser = client(app)
+    original = submit_recovery_task(browser, library='sql')
+    store = browser_store(tmp_path, browser)
+    store.update(original, 'failed', '模拟超时')
+    first = browser.post(
+        f'/api/generation-tasks/{original}/retry', headers={'Origin': ORIGIN})
+    assert first.status_code == 202, first.text
+    retry_id = first.json()['taskId']
+    # A new app instance initializes the same existing space without
+    # dropping or weakening its current retry receipt / trigger.
+    restored = client(app_at(tmp_path))
+    restored.cookies.update(browser.cookies)
+    with browser_store(tmp_path, restored).db() as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='limit_task_retry_depth'"
+        ).fetchone()[0] == 1
+        with __import__('pytest').raises(sqlite3.IntegrityError):
+            db.execute('INSERT INTO web_task_retries VALUES(?,?)',
+                       (retry_id, 'e'*32))
+    with store.db() as db:
+        assert db.execute('SELECT COUNT(*) FROM web_task_retries').fetchone()[0] == 1
+
+
 def test_agent_recovery_advice_is_scoped_read_only_and_bounded(tmp_path, monkeypatch):
     from backend import web_trial
     monkeypatch.setattr(web_api, 'generation_readiness',

@@ -218,6 +218,8 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
     async def database_constraint(request, error):
         if str(error) == 'trial_library_limit':
             return JSONResponse({'detail': '已达到当前试用空间的知识库数量上限。'}, status_code=429)
+        if str(error) == 'task_retry_depth_limit':
+            return JSONResponse({'detail': '每份任务最多允许一次人工重试，请检查失败原因。'}, status_code=409)
         LOGGER.error('Trial data constraint failed', exc_info=error)
         return JSONResponse({'detail': '学习数据暂时无法保存，请稍后重试。'}, status_code=500)
 
