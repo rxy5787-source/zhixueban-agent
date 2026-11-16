@@ -166,6 +166,82 @@ def test_duplicate_review_ids_and_invalid_scores_are_rejected(tmp_path):
         zh06.read_reviews(review)
 
 
+
+def test_resume_rejects_changed_source_prompt_or_request_id():
+    cases = zh06.load_cases()
+    case = cases[12]  # SQL mnemonic
+    record = {
+        "caseId": case["id"], "kind": case["kind"], "sourceSha256": "f" * 64,
+        "requestSent": zh06.case_prompt(case), "clientRequestId": "a" * 32,
+    }
+    zh06.resume_artifact(record, case, "f" * 64)
+    with pytest.raises(RuntimeError, match="does not match"):
+        zh06.resume_artifact(record, case, "e" * 64)
+    with pytest.raises(RuntimeError, match="does not match"):
+        zh06.resume_artifact({**record, "clientRequestId": "invalid"}, case, "f" * 64)
+    with pytest.raises(RuntimeError, match="does not match"):
+        zh06.resume_artifact({**record, "requestSent": "changed prompt"}, case, "f" * 64)
+
+
+def test_progress_requires_explicit_resume_to_replace(tmp_path):
+    path = tmp_path / "case-13.json"
+    zh06.write_progress(path, {"runStatus": "prepared"}, permitted=False)
+    with pytest.raises(FileExistsError):
+        zh06.write_progress(path, {"runStatus": "succeeded"}, permitted=False)
+    assert json.loads(path.read_text(encoding="utf-8"))["runStatus"] == "prepared"
+    zh06.write_progress(path, {"runStatus": "succeeded"}, permitted=True)
+    assert json.loads(path.read_text(encoding="utf-8"))["runStatus"] == "succeeded"
+
+
+def test_server_receipt_lookup_recovers_task_without_upload():
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"taskId": "b" * 32, "status": "queued"}
+
+    class FakeSession:
+        def get(self, path, **kwargs):
+            assert path.endswith("/api/generation-submissions/" + "a" * 32)
+            assert kwargs["allow_redirects"] is False
+            return FakeResponse()
+
+    assert zh06.receipt_for_case(FakeSession(), "http://127.0.0.1:8095", "a" * 32) == "b" * 32
+
+
+def test_server_receipt_404_does_not_invent_task():
+    class MissingSession:
+        def get(self, *args, **kwargs):
+            return type("NotFound", (), {"status_code": 404})()
+
+    assert zh06.receipt_for_case(MissingSession(), "http://127.0.0.1:8095", "a" * 32) is None
+
+
+def test_session_cookie_is_saved_without_disclosure(tmp_path):
+    from http.cookiejar import Cookie
+    import os
+
+    path = tmp_path / ".local-trial.cookies"
+    jar = zh06.MozillaCookieJar(str(path))
+    jar.set_cookie(Cookie(
+        version=0, name="zhixue-trial", value="sensitive-session-token", port=None,
+        port_specified=False, domain="127.0.0.1", domain_specified=False,
+        domain_initial_dot=False, path="/", path_specified=True, secure=False,
+        expires=2000000000, discard=False, comment=None, comment_url=None,
+        rest={}, rfc2109=False,
+    ))
+    zh06.save_private_session(jar)
+    assert path.is_file()
+    loaded = zh06.MozillaCookieJar(str(path))
+    loaded.load()
+    assert len(list(loaded)) == 1
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o077 == 0
+
+
 def test_plan_cli_does_not_require_source_files(capsys):
     assert zh06.main(["plan"]) == 0
     output = capsys.readouterr().out

@@ -35,6 +35,38 @@ def create_exam(browser, library):
 
 
 
+
+def test_zh06_preflight_requires_local_preview_and_verified_session(tmp_path, monkeypatch):
+    from backend import web_trial
+    monkeypatch.setattr(web_trial, 'generation_readiness',
+                        lambda: {'generationReady': True, 'requiredTextModel': 'qwen3:1.7b'})
+    public = app_at(tmp_path / 'public')
+    public_browser = client(public)
+    public_browser.get('/')
+    assert public_browser.get('/api/evaluation-preflight').status_code == 404
+
+    frontend = tmp_path / 'frontend'
+    (frontend / 'assets').mkdir(parents=True, exist_ok=True)
+    (frontend / 'index.html').write_text('<title>Local evaluation</title>')
+    origin = 'http://127.0.0.1:8095'
+    local = create_app(tmp_path / 'local-data', frontend, origin, SECRET,
+                       start_worker=False, local_preview=True)
+    browser = TestClient(local, base_url=origin)
+    assert browser.get('/api/evaluation-preflight').status_code == 401
+    assert browser.get('/').status_code == 200
+    ready = browser.get('/api/evaluation-preflight')
+    assert ready.status_code == 200
+    assert ready.json()['localPreview'] is True
+    assert ready.json()['requiredTextModel'] == 'qwen3:1.7b'
+    assert browser.get('/api/evaluation-preflight',
+                       headers={'Origin': 'https://evil.example'}).status_code == 403
+    monkeypatch.setattr(web_trial, 'generation_readiness',
+                        lambda: {'generationReady': False, 'generationIssue': '模型未启动'})
+    unavailable = browser.get('/api/evaluation-preflight')
+    assert unavailable.status_code == 200
+    assert unavailable.json()['generationReady'] is False
+
+
 def test_zh06_evaluation_question_types_reach_intended_worker_contract(tmp_path, monkeypatch):
     """Actual trial route accepts four kinds; no Ollama or worker is started."""
     import json

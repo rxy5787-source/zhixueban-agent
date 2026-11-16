@@ -11,6 +11,7 @@ import csv
 import hashlib
 import json
 import mimetypes
+import os
 import re
 import statistics
 import subprocess
@@ -19,6 +20,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from http.cookiejar import MozillaCookieJar
 from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -153,6 +155,54 @@ def checked_local_response(response):
     return response
 
 
+def save_private_session(jar: MozillaCookieJar) -> None:
+    """Session credentials are never printed, committed, or included in reports."""
+    path = Path(jar.filename)
+    if path.is_symlink():
+        raise RuntimeError("Refusing to write a symlinked evaluation cookie file.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    jar.save(ignore_discard=True, ignore_expires=False)
+    if os.name != "nt":
+        path.chmod(0o600)
+
+
+def resume_artifact(existing: dict, case: dict, source_sha: str) -> None:
+    if (existing.get("caseId") != case["id"] or
+            existing.get("kind") != case["kind"] or
+            existing.get("sourceSha256") != source_sha or
+            existing.get("requestSent") != case_prompt(case) or
+            not re.fullmatch(r"[0-9a-f]{32}", str(existing.get("clientRequestId", "")))):
+        raise RuntimeError("Saved evaluation case does not match current source/requirements; use a separate output folder.")
+
+
+def write_progress(path: Path, data: dict, *, permitted: bool) -> None:
+    """Never replace a result without explicit --resume; atomic file replacement."""
+    if path.is_symlink() or (path.exists() and not permitted):
+        raise FileExistsError(f"Existing result not overwritten: {path}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name("." + path.name + "." + uuid.uuid4().hex + ".tmp")
+    try:
+        temp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.replace(path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def receipt_for_case(session, origin: str, client_request_id: str) -> str | None:
+    """Recover the accepted task without uploading a second copy."""
+    response = session.get(
+        origin + "/api/generation-submissions/" + client_request_id,
+        timeout=20, allow_redirects=False,
+    )
+    if response.status_code == 404:
+        return None
+    checked_local_response(response)
+    task_id = response.json().get("taskId")
+    if not isinstance(task_id, str) or not re.fullmatch(r"[0-9a-f]{32}", task_id):
+        raise RuntimeError("Malformed submission receipt; refusing a new upload.")
+    return task_id
+
+
 def run_live(args, cases) -> None:
     if not args.confirm_live:
         raise ValueError("Model evaluation sends files and costs time. Add --confirm-live to execute.")
@@ -161,22 +211,38 @@ def run_live(args, cases) -> None:
     paths = source_paths(selected, args.system_source, args.sql_source)
     if not 10 <= args.timeout_seconds <= 1800 or not 1 <= args.poll_seconds <= 30:
         raise ValueError("Use --timeout-seconds 10-1800 and --poll-seconds 1-30.")
-    if any((args.output / f"case-{case['id']:02d}.json").exists() for case in selected):
-        raise FileExistsError("The selected cases already have artifacts; use a new --output directory.")
+    if not args.resume and any((args.output / f"case-{case['id']:02d}.json").exists() for case in selected):
+        raise FileExistsError("Existing cases require --resume or a new output directory.")
     import requests
 
+    args.output.mkdir(parents=True, exist_ok=True)
+    cookies_file = args.output / ".local-trial.cookies"
+    if cookies_file.is_symlink():
+        raise RuntimeError("Refusing symlinked session credentials.")
+    if cookies_file.exists() and not args.resume:
+        raise RuntimeError("This evaluation directory has an existing session; use --resume or a new directory.")
+    jar = MozillaCookieJar(str(cookies_file))
+    if args.resume:
+        if not cookies_file.is_file():
+            raise RuntimeError("Missing saved browser session; do not start a new one for an existing run.")
+        jar.load(ignore_discard=True, ignore_expires=False)
+        if not list(jar):
+            raise RuntimeError("Saved session expired. Open a new isolated evaluation directory.")
     session = requests.Session()
-    session.trust_env = False  # Never route a loopback evaluation through env proxies.
+    session.trust_env = False
+    session.cookies = jar
     session.headers.update({"Origin": origin})
-    homepage = checked_local_response(session.get(
-        origin + "/", timeout=20, allow_redirects=False,
-    ))
-    if not session.cookies:
-        raise RuntimeError("No trial session cookie. Use a local trial without invitation gate.")
-    health = checked_local_response(session.get(
-        origin + "/api/health", timeout=20, allow_redirects=False,
-    )).json()
-    if not isinstance(health, dict) or not health.get("generationReady"):
+    if not args.resume:
+        checked_local_response(session.get(origin + "/", timeout=20, allow_redirects=False))
+        if not list(jar):
+            raise RuntimeError("No trial session cookie. Use a local trial without invitation gate.")
+        save_private_session(jar)
+    health_response = session.get(origin + "/api/evaluation-preflight", timeout=20, allow_redirects=False)
+    checked_local_response(health_response)
+    health = health_response.json()
+    if not isinstance(health, dict) or health.get("localPreview") is not True:
+        raise RuntimeError("This server is not an approved local evaluation preview.")
+    if not health.get("generationReady"):
         raise RuntimeError("Local Qwen model is not ready; check Ollama and AI_TEXT_MODEL.")
     model = health.get("requiredTextModel") or health.get("textModel")
     revision = code_revision()
@@ -186,51 +252,72 @@ def run_live(args, cases) -> None:
     for case in selected:
         group = case["group"]
         library = "zh06-system" if group == "system" else "zh06-sql"
+        source = paths[group]
+        digest = hashlib.sha256(source.read_bytes()).hexdigest()
+        record_path = args.output / f"case-{case['id']:02d}.json"
+        prior = None
+        if record_path.exists():
+            if not args.resume:
+                raise FileExistsError(f"Result already exists: {record_path}")
+            prior = json.loads(record_path.read_text(encoding="utf-8"))
+            resume_artifact(prior, case, digest)
+            if prior["runStatus"] in TERMINAL:
+                print(f"Case {case['id']:02d}: already terminal, preserving original result.", flush=True)
+                continue
         if library not in initialized:
             checked_local_response(session.put(
                 origin + "/api/libraries/" + library, json={"title": "ZH-06 " + group},
                 timeout=20, allow_redirects=False,
             ))
             initialized.add(library)
-        source = paths[group]
-        started_at = datetime.now(timezone.utc).isoformat()
-        started = time.monotonic()
-        artifact = {
+
+        artifact = prior or {
             "caseId": case["id"], "group": group, "kind": case["kind"],
             "expectedNegative": case["negative"], "requirement": case["requirement"],
-            "sourceName": source.name,
-            "sourceSha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+            "sourceName": source.name, "sourceSha256": digest,
             "requestSent": case_prompt(case),
-            "runStartedUtc": started_at, "taskId": None,
+            "runStartedUtc": datetime.now(timezone.utc).isoformat(),
+            "taskId": None, "clientRequestId": uuid.uuid4().hex,
             "model": model, "codeRevision": revision,
-            "runStatus": "not_submitted", "modelCallCount": None, "task": None,
+            "runStatus": "prepared", "modelCallCount": None, "task": None,
         }
+        if prior is not None and prior.get("model") != model:
+            raise RuntimeError("Evaluation model has changed. Do not mix models within one run.")
+        if prior is None:
+            write_progress(record_path, artifact, permitted=False)
+        started = time.monotonic()
         try:
             print(f"Case {case['id']:02d}: {case['label']} · {group}", flush=True)
-            with source.open("rb") as file:
-                response = session.post(
-                    origin + "/api/generation-tasks",
-                    data={
-                        "libraryId": library, "libraryName": "ZH-06 " + group,
-                        "requirements": case_prompt(case), "questionCount": "1",
-                        "questionType": case["kind"],
-                        "clientRequestId": uuid.uuid4().hex,
-                    },
-                    files={"files": (source.name, file, mimetypes.guess_type(source.name)[0] or "application/octet-stream")},
-                    timeout=(10, 90), allow_redirects=False,
-                )
-            checked_local_response(response)
-            task_id = response.json()["taskId"]
-            if not re.fullmatch(r"[0-9a-f]{32}", task_id):
-                raise ValueError("Unexpected task identifier in server receipt.")
+            task_id = artifact.get("taskId")
+            if task_id is None:
+                task_id = receipt_for_case(session, origin, artifact["clientRequestId"])
+            if task_id is None:
+                # Identical request id is committed BEFORE POST. A lost HTTP
+                # response can be recovered through the receipt endpoint.
+                with source.open("rb") as file:
+                    response = checked_local_response(session.post(
+                        origin + "/api/generation-tasks",
+                        data={
+                            "libraryId": library, "libraryName": "ZH-06 " + group,
+                            "requirements": case_prompt(case), "questionCount": "1",
+                            "questionType": case["kind"],
+                            "clientRequestId": artifact["clientRequestId"],
+                        },
+                        files={"files": (source.name, file, mimetypes.guess_type(source.name)[0] or "application/octet-stream")},
+                        timeout=(10, 90), allow_redirects=False,
+                    ))
+                task_id = response.json().get("taskId")
+            if not isinstance(task_id, str) or not re.fullmatch(r"[0-9a-f]{32}", task_id):
+                raise RuntimeError("Unexpected task ID; aborting without resubmission.")
             artifact["taskId"] = task_id
+            artifact["runStatus"] = "submitted"
+            write_progress(record_path, artifact, permitted=True)
             deadline = time.monotonic() + args.timeout_seconds
             while True:
-                task_response = checked_local_response(session.get(
-                    origin + "/api/generation-tasks/" + task_id,
-                    timeout=20, allow_redirects=False,
-                ))
-                task = task_response.json()
+                task = checked_local_response(session.get(
+                    origin + "/api/generation-tasks/" + task_id, timeout=20,
+                    allow_redirects=False,
+                )).json()
                 artifact["task"] = task
                 status = task.get("status")
                 if status in TERMINAL:
@@ -240,15 +327,17 @@ def run_live(args, cases) -> None:
                     artifact["runStatus"] = "still_running_at_timeout"
                     break
                 time.sleep(args.poll_seconds)
-        except (requests.RequestException, KeyError, TypeError, ValueError) as exc:
+        except (requests.RequestException, KeyError, TypeError, ValueError, RuntimeError) as exc:
             artifact["runStatus"] = "request_error"
             artifact["error"] = f"{type(exc).__name__}: {str(exc)[:350]}"
-        artifact["elapsedWallMs"] = round(1000 * (time.monotonic() - started))
+        artifact["elapsedWallMs"] = (artifact.get("elapsedWallMs") or 0) + round(
+            1000 * (time.monotonic() - started)
+        )
         artifact["runFinishedUtc"] = datetime.now(timezone.utc).isoformat()
-        write_json(args.output / f"case-{case['id']:02d}.json", artifact)
+        write_progress(record_path, artifact, permitted=True)
         print(f"  {artifact['runStatus']} · {artifact['elapsedWallMs']/1000:.1f}s", flush=True)
         if artifact["runStatus"] not in TERMINAL:
-            print("Stopped after an incomplete/error submission. Inspect the case artifact before resuming.")
+            print("Stopped after incomplete execution. Re-run same cases/output with --resume.")
             break
 
 
@@ -376,6 +465,7 @@ def main(argv=None) -> int:
     sub.add_parser("plan", help="Print the 20 source-defined cases without running Qwen.")
     run = sub.add_parser("run", help="Explicitly execute against a LOOPBACK-only trial.")
     run.add_argument("--confirm-live", action="store_true")
+    run.add_argument("--resume", action="store_true", help="Reuse original local session and submission receipts.")
     run.add_argument("--base-url", default="http://127.0.0.1:8095")
     run.add_argument("--cases", default="all", help="all or comma-separated IDs, e.g. 13,20")
     run.add_argument("--system-source", type=Path, help="Original computer-systems Word/PDF/TXT; required for cases 1-12")

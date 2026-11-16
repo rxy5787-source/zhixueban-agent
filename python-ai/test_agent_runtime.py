@@ -92,5 +92,10 @@ from evaluation.test_zh06 import (  # noqa: F401
     test_run_without_consent_does_not_open_network_or_files,
     test_duplicate_run_case_cannot_be_silently_overwritten,
     test_duplicate_review_ids_and_invalid_scores_are_rejected,
+    test_resume_rejects_changed_source_prompt_or_request_id,
+    test_progress_requires_explicit_resume_to_replace,
+    test_server_receipt_lookup_recovers_task_without_upload,
+    test_server_receipt_404_does_not_invent_task,
+    test_session_cookie_is_saved_without_disclosure,
     test_plan_cli_does_not_require_source_files,
 )
