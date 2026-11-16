@@ -18,6 +18,10 @@ class Store:
             CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,owner TEXT NOT NULL,state TEXT NOT NULL,stage TEXT NOT NULL,request TEXT NOT NULL,result TEXT NOT NULL,error TEXT NOT NULL,cancel INTEGER NOT NULL DEFAULT 0,created REAL NOT NULL,updated REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS job_events(id INTEGER PRIMARY KEY,job_id TEXT NOT NULL,state TEXT NOT NULL,stage TEXT NOT NULL,created REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS events_job ON job_events(job_id,id);
+            CREATE TABLE IF NOT EXISTS job_archive_metrics(
+              job_id TEXT PRIMARY KEY, callback_elapsed_ms INTEGER NOT NULL,
+              created REAL NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner,created);
             CREATE TABLE IF NOT EXISTS model_call(id INTEGER PRIMARY KEY,job_id TEXT NOT NULL,phase TEXT NOT NULL,response TEXT NOT NULL,created REAL NOT NULL);
             """)
@@ -60,7 +64,10 @@ class Store:
             db.execute('BEGIN IMMEDIATE')
             row=db.execute("SELECT id FROM jobs WHERE state='queued' ORDER BY created LIMIT 1").fetchone()
             if not row:return None
-            db.execute("UPDATE jobs SET state='running',stage='准备解析',updated=? WHERE id=?",(time.time(),row['id']))
+            now = time.time()
+            db.execute("UPDATE jobs SET state='running',stage='准备解析',updated=? WHERE id=?",(now,row['id']))
+            db.execute("INSERT INTO job_events(job_id,state,stage,created) VALUES(?,?,?,?)",
+                       (row['id'],'running','准备解析',now))
         return self.get(row['id'])
     def recent(self, owner):
         with self.db() as db:
@@ -80,7 +87,15 @@ class Store:
             if not updated.rowcount:
                 return
             if result is not None:
+                started_ns=time.perf_counter_ns()
                 self.publish_result(db,ident,state,result,now)
+                if state in ('succeeded', 'partial'):
+                    callback_ms=max(0, (time.perf_counter_ns()-started_ns)//1_000_000)
+                    db.execute("""INSERT INTO job_archive_metrics(job_id,callback_elapsed_ms,created)
+                        VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE
+                        SET callback_elapsed_ms=excluded.callback_elapsed_ms,
+                            created=excluded.created""",
+                        (ident,callback_ms,now))
             db.execute('INSERT INTO job_events(job_id,state,stage,created) VALUES(?,?,?,?)',(ident,state,stage,now))
     def publish_result(self, db, ident, state, result, now):
         """Allow a store to publish its result in the same transaction."""
