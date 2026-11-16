@@ -21,6 +21,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .job_store import Store
+from .job_timing import timing_report
+from .web_content import OWNER
 from .web_api import WebStore, init_web_tables, request_store_override, routes
 from .worker import Runner
 from .trial_body_limit import RequestBodyLimit
@@ -283,6 +285,36 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
             login_attempts.pop(address, None)
         ident = existing_space(request) or spaces.new(address)
         return attach_cookie(RedirectResponse('/', status_code=303, headers={'Cache-Control': 'no-store'}), ident)
+
+    @app.get('/api/generation-tasks/{ident}/timing')
+    def task_stage_timing(ident: str, request: Request):
+        # A valid cookie selects a private SQLite store. A task ID by itself
+        # never authorizes access to another visitor's data.
+        space_id = existing_space(request)
+        space = spaces.get(space_id) if space_id is not None else None
+        if space is None:
+            raise HTTPException(401, '请先建立浏览器会话')
+        with space.db() as db:
+            job = db.execute(
+                """SELECT j.id,j.state,j.created,j.updated FROM jobs j
+                   JOIN web_tasks t ON t.task_id=j.id
+                   WHERE j.id=? AND j.owner=?""",
+                (ident, OWNER),
+            ).fetchone()
+            if job is None:
+                raise HTTPException(404, '生成任务不存在')
+            events = [dict(item) for item in db.execute(
+                'SELECT state,stage,created FROM job_events WHERE job_id=? ORDER BY id',
+                (ident,),
+            )]
+            metric = db.execute(
+                'SELECT callback_elapsed_ms FROM job_archive_metrics WHERE job_id=?',
+                (ident,),
+            ).fetchone()
+        return timing_report(
+            dict(job), events,
+            metric['callback_elapsed_ms'] if metric else None,
+        )
 
     @app.get('/favicon.svg')
     def favicon():
