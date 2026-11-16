@@ -33,6 +33,106 @@ def create_exam(browser, library):
     })
 
 
+
+def test_stage_timing_is_session_scoped_and_strips_private_text(tmp_path):
+    from backend.job_timing import phase_from_stage
+    app = app_at(tmp_path)
+    first, second = client(app), client(app)
+    first.get('/')
+    second.get('/')
+    task = create_exam(first, 'sql').json()['taskId']
+    url = f'/api/generation-tasks/{task}/timing'
+    assert second.get(url).status_code == 404
+    assert client(app).get(url).status_code == 401
+    assert first.get('/api/generation-tasks/missing/timing').status_code == 404
+
+    store = browser_store(tmp_path, first)
+    secret = 'token-PLEASE-NEVER-LOG'
+    store.update(task, 'running', '解析 ' + secret + '.docx')
+    store.update(task, 'running', '正在识别扫描文字 · ' + secret)
+    store.update(task, 'running', 'AI生成题目 · ' + secret)
+    store.update(task, 'running', '自动质量初筛 · ' + secret)
+    store.update(task, 'failed', '处理失败 · ' + secret, error='账号凭据 '+secret)
+
+    response = first.get(url)
+    assert response.status_code == 200, response.text
+    info = response.json()
+    assert info['taskId'] == task
+    assert info['state'] == 'failed'
+    assert info['errorCategory'] == 'task_failed'
+    assert info['queueWaitMs'] is None  # Synthetic task has no claim event.
+    assert info['archiveCallbackMs'] is None
+    assert info['terminalWallTimeMs'] is not None
+    assert set(info['phaseElapsedMs']).issubset(
+        {'preparation', 'parsing', 'ocr', 'knowledge', 'generation', 'quality', 'checkpoint', 'other'})
+    assert 'parsing' in info['phaseElapsedMs']
+    assert 'ocr' in info['phaseElapsedMs']
+    assert 'generation' in info['phaseElapsedMs']
+    assert 'quality' in info['phaseElapsedMs']
+    assert secret not in response.text
+    assert '.docx' not in response.text
+    assert '凭据' not in response.text
+    assert phase_from_stage('未知内容:' + secret) == 'other'
+    assert first.get(url, headers={'Origin': 'https://evil.example'}).status_code == 403
+
+
+def test_stage_timing_claim_and_archive_callback_are_measured(tmp_path, monkeypatch):
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    browser = client(app)
+    task = submit_recovery_task(browser, library='sql')
+    store = browser_store(tmp_path, browser)
+    claimed = store.claim()
+    assert claimed['id'] == task
+    store.update(task, 'running', 'AI生成题目')
+    store.update(task, 'running', '自动质量初筛')
+    store.update(task, 'succeeded', '已结束', {'content': {'libraries': []}})
+    with store.db() as db:
+        assert db.execute(
+            'SELECT COUNT(*) FROM job_events WHERE job_id=? AND stage=?',
+            (task, '准备解析'),
+        ).fetchone()[0] == 1
+        assert db.execute(
+            'SELECT COUNT(*) FROM job_archive_metrics WHERE job_id=?',
+            (task,),
+        ).fetchone()[0] == 1
+    data = browser.get(f'/api/generation-tasks/{task}/timing').json()
+    assert data['queueWaitMs'] is not None
+    assert data['archiveCallbackMs'] is not None
+    assert data['archiveCallbackMs'] >= 0
+    assert data['timingBasis'] == 'completed_checkpoint_intervals'
+    assert data['terminalWallTimeMs'] is not None
+    assert data['errorCategory'] is None
+    assert 'generation' in data['phaseElapsedMs']
+    assert 'quality' in data['phaseElapsedMs']
+    # Re-reading metrics cannot mutate the checkpoint event history.
+    with store.db() as db:
+        before = db.execute('SELECT COUNT(*) FROM job_events WHERE job_id=?', (task,)).fetchone()[0]
+    browser.get(f'/api/generation-tasks/{task}/timing')
+    with store.db() as db:
+        after = db.execute('SELECT COUNT(*) FROM job_events WHERE job_id=?', (task,)).fetchone()[0]
+    assert before == after
+
+
+def test_stage_timing_direct_algorithm_handles_empty_and_clock_regression():
+    from backend.job_timing import timing_report
+    job = {'id': 'f'*32, 'created': 100.0, 'updated': 112.0, 'state': 'interrupted'}
+    empty = timing_report(job, [])
+    assert empty['phaseElapsedMs'] == {}
+    assert empty['queueWaitMs'] is None
+    assert empty['errorCategory'] == 'task_interrupted'
+    events = [
+        {'state': 'running', 'stage': '准备解析', 'created': 106.0},
+        {'state': 'running', 'stage': 'AI生成题目 token-SENSITIVE', 'created': 104.0},
+        {'state': 'interrupted', 'stage': '中断 token-SENSITIVE', 'created': 112.0},
+    ]
+    result = timing_report(job, events)
+    assert result['queueWaitMs'] == 6000
+    assert result['phaseElapsedMs']['preparation'] == 0
+    assert result['phaseElapsedMs']['generation'] == 6000
+    assert 'SENSITIVE' not in str(result)
+
+
 def test_sessions_are_isolated_and_survive_restart(tmp_path):
     app = app_at(tmp_path)
     first, second = client(app), client(app)
