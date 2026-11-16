@@ -1,0 +1,103 @@
+name: Phase 40 Integration readiness gate
+
+on:
+  push:
+    branches:
+      - ci/phase40-integration-readiness-20261117
+    paths:
+      - 'python-ai/**'
+      - 'web-prototype/**'
+      - 'scripts/verify_trial_release.py'
+      - 'scripts/check_integration_readiness.py'
+      - 'docs/integration/**'
+      - 'scripts/tests/**'
+      - '.github/workflows/phase40-integration-readiness.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-candidate:
+    name: Verify mainline history and offline release candidate
+    runs-on: windows-2025
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web-prototype/package-lock.json
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: python-ai/requirements.txt
+      - name: Check that the candidate contains the main baseline
+        shell: pwsh
+        run: |
+          git merge-base --is-ancestor origin/main HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Release candidate does not contain main HEAD' }
+          $count = git rev-list --count origin/main..HEAD
+          Write-Host "Release candidate is ahead of main by $count commits. This does not merge it."
+      - name: Test integration audit and verify pinned PR ancestry
+        shell: pwsh
+        run: |
+          python -m pytest -q scripts/tests/test_integration_readiness.py
+          if ($LASTEXITCODE -ne 0) { throw 'Integration audit unit tests failed' }
+          python scripts/check_integration_readiness.py --manifest docs/integration/phase40.json --output integration-audit.json
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned mainline history is not contained in candidate' }
+      - name: Build Web frontend
+        working-directory: web-prototype
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+      - name: Install Python requirements
+        run: |
+          python -m pip install -r python-ai/requirements.txt
+          python -m pip check
+      - name: Test Agent runtime and study planning
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "python-ai"
+          python -m pytest -q python-ai/test_agent_runtime.py python-ai/test_weak_points_skill.py python-ai/test_study_skill_planner.py
+      - name: Test deterministic backend quality and job lifecycle
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "python-ai"
+          python -m pytest -q python-ai/tests/test_job_store.py python-ai/tests/test_literal_evidence.py python-ai/tests/test_practice_quality.py python-ai/tests/test_validator_gates.py
+      - name: Test ZIP verifier failure cases
+        run: python -m pytest -q scripts/tests/test_verify_trial_release.py
+      - name: Package Web trial and validate source archive
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'zhixueban-release-candidate.zip'
+          $package = Join-Path $env:RUNNER_TEMP 'zhixueban-release-candidate'
+          $manifest = Join-Path $env:RUNNER_TEMP 'zhixueban-release-manifest.json'
+          & ./web-prototype/deploy/prepare.ps1 -PythonProject (Resolve-Path python-ai).Path -OutputZip $archive
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging failed' }
+          python scripts/verify_trial_release.py $archive --manifest $manifest
+          if ($LASTEXITCODE -ne 0) { throw 'Archive release gate failed' }
+          Expand-Archive -LiteralPath $archive -DestinationPath $package
+          $env:PYTHONPATH = Join-Path $package 'server'
+          python -m pytest -q web-prototype/deploy/test_web_trial.py
+      - name: Summarize candidate (no source ZIP uploaded)
+        if: success()
+        shell: pwsh
+        run: |
+          $manifest = Join-Path $env:RUNNER_TEMP 'zhixueban-release-manifest.json'
+          $manifestData = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
+          $report = @(
+            '## Offline release candidate gate'
+            ''
+            ('- Head: ' + $env:GITHUB_SHA)
+            ('- ZIP SHA-256: ' + $manifestData.sha256)
+            ('- ZIP entries: ' + $manifestData.fileCount)
+            ('- Python sources parsed: ' + $manifestData.pythonFilesParsed)
+            '- Status: offline checks only; Docker/model/device validation not performed'
+          )
+          $report | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
