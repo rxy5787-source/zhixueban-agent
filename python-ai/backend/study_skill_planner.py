@@ -21,6 +21,7 @@ class StudyPlan(BaseModel):
     topics: list[str] = Field(default_factory=list)
     reason: str
     visited_skills: list[str]
+    decision_trace: dict = Field(default_factory=dict)
 
 
 class LearningPlanner:
@@ -105,15 +106,22 @@ def plan_study_from_progress(
     state = {"progress": progress}
     registry = registry if registry is not None else study_registry()
     planner = planner if planner is not None else LearningPlanner()
+    from .agent_decision_audit import STUDY_VERSION, study_choice
     visited: list[str] = []
+    decisions: list[dict] = []
 
-    # The complete pilot requires two transitions. Guard against future loops.
-    for _ in range(3):
-        name = planner.next_skill(state)
+    # Two Skill transitions plus a terminal STOP; no model calls here.
+    for step in range(1, 4):
+        decision = study_choice(state, planner, step)
+        decisions.append(decision)
+        name = decision["selectedSkill"]
         if name is None:
             if "plan" not in state:
                 raise AgentSkillError("Planner stopped without producing a plan")
-            return StudyPlan(**state["plan"], visited_skills=visited)
+            return StudyPlan(
+                **state["plan"], visited_skills=visited,
+                decision_trace={"policyVersion": STUDY_VERSION, "decisions": decisions},
+            )
         state.update(registry.execute(name, state))
         visited.append(name)
     raise AgentSkillError("Learning planner exceeded step budget")
