@@ -288,6 +288,17 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
         ident = existing_space(request) or spaces.new(address)
         return attach_cookie(RedirectResponse('/', status_code=303, headers={'Cache-Control': 'no-store'}), ident)
 
+    @app.get('/api/evaluation-preflight')
+    def evaluation_preflight(request: Request):
+        # Exposes evaluation permission ONLY for loopback-local preview.
+        # A public trial cannot opt in to unlimited experiments.
+        if not local_preview or request.client is None or (
+                request.client.host not in {'127.0.0.1', '::1', 'testclient'}):
+            raise HTTPException(404)
+        if existing_space(request) is None:
+            raise HTTPException(401, '本地评测会话无效')
+        return {'localPreview': True, **generation_readiness()}
+
     @app.get('/api/study-plans/{library_id}')
     def study_plan(library_id: str, request: Request):
         # The verified session picks the store; the path only picks a library
