@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "baseline": {
+    "ref": "main",
+    "sha": "d76e9e8d675ab4df5e7e4ab39ef44e1eea62e825"
+  },
+  "spine": [
+    {
+      "pr": 14,
+      "sha": "ea5c6659ca0664e15653c3ec1364df76a9d9f521"
+    },
+    {
+      "pr": 17,
+      "sha": "361cd74cbfae1d5e790fbc210d4537fad327e3a0"
+    },
+    {
+      "pr": 19,
+      "sha": "6413cbd8a974948cdb5a052f57ce601a5a8cbebd"
+    },
+    {
+      "pr": 31,
+      "sha": "8ad3ddf9ebf0dac6c192913372762f245c30f43a"
+    },
+    {
+      "pr": 37,
+      "sha": "36aa633e7dd828f849d469c860417e0406289a93"
+    },
+    {
+      "pr": 38,
+      "sha": "39d53bc0b78e325ef68653ec0502b5f591dec967"
+    },
+    {
+      "pr": 39,
+      "sha": "0de43fd5fed5764f722391a1b6f74b0d38475b68"
+    },
+    {
+      "pr": 40,
+      "sha": "27b3079c99fcaaaa16f13a6dc4aa2f5afc03dcfe"
+    },
+    {
+      "pr": 41,
+      "sha": "e4044eced6e12ed376f1f9c53d678533288ecf5f"
+    },
+    {
+      "pr": 42,
+      "sha": "706093d4b23cfd883ab254d3f1e1ebf715879843"
+    }
+  ],
+  "sideBranches": [
+    {
+      "pr": 16,
+      "sha": "645f8e0b8556d524817537b57c2f2c45f0b8e482",
+      "reason": "Weak-point Skill code is duplicated on mainline; independent docs/CI require review."
+    },
+    {
+      "pr": 18,
+      "sha": "928b541c1e4c438acc130e813154c9f6afac24f8",
+      "reason": "85 tests selectively ported in #39; legacy formatting/patches not merged."
+    },
+    {
+      "pr": 25,
+      "sha": "2b27b5c9afb6f98f7c320b5f91691e60a0148094",
+      "reason": "Android off-device CI remains a separate draft PR."
+    },
+    {
+      "pr": 26,
+      "sha": "4d52ca893b023de4b8746540b2ca0f1221a9038d",
+      "reason": "Timing behavior manually ported into #37; original branch not merged."
+    },
+    {
+      "pr": 27,
+      "sha": "49f47f0eaf19e00ef04d3fbb890517732050a6bb",
+      "reason": "Concurrency tests manually ported into #38; original branch not merged."
+    },
+    {
+      "pr": 33,
+      "sha": "775a9c14b1a5023fb226b9c543c0f9515a9ed7af",
+      "reason": "Project continuity skill separate; not automatically installed."
+    },
+    {
+      "pr": 34,
+      "sha": "3b8e4fe7d4ca5fc7e0522c4550ed992236bc2198",
+      "reason": "Integration audit document is on separate docs branch."
+    },
+    {
+      "pr": 35,
+      "sha": "9f8066ff5dd3c81fe112647fccc3058250f6e864",
+      "reason": "Standalone Phase33 tests are not in current mainline ancestry."
+    }
+  ]
+}
