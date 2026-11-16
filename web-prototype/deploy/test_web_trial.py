@@ -1134,7 +1134,8 @@ def test_phase34_timing_analyzer_handles_clock_regression_without_private_data()
     assert 'CREDENTIAL-SECRET' not in str(report)
 
 
-def test_phase34_recovery_advice_and_timing_diagnostics_remain_independent(tmp_path):
+def test_phase34_recovery_advice_and_timing_diagnostics_remain_independent(tmp_path, monkeypatch):
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
     app = app_at(tmp_path)
     browser = client(app)
     task = submit_recovery_task(browser, library='sql')
