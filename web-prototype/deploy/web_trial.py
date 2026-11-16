@@ -16,10 +16,12 @@ import time
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .job_store import Store
 from .job_timing import timing_report
@@ -40,6 +42,38 @@ UPLOAD_LIMIT = 25 * 1024 * 1024
 COOKIE_LIFETIME = 30 * 24 * 60 * 60
 MAX_JOBS_PER_SPACE = 8
 MAX_LIBRARIES_PER_SPACE = 50
+
+# Stable, non-sensitive codes allow clients to handle errors without parsing
+# localized messages. Request IDs are server-issued, not copied from headers.
+ERROR_CODES = {
+    400: "BAD_REQUEST",
+    401: "AUTH_REQUIRED",
+    403: "FORBIDDEN",
+    404: "NOT_FOUND",
+    408: "REQUEST_TIMEOUT",
+    409: "CONFLICT",
+    413: "PAYLOAD_TOO_LARGE",
+    422: "INVALID_REQUEST",
+    429: "RATE_LIMITED",
+    499: "CLIENT_DISCONNECTED",
+    503: "SERVICE_UNAVAILABLE",
+}
+
+
+def error_code(status: int) -> str:
+    return ERROR_CODES.get(status, "SERVER_ERROR" if status >= 500 else "HTTP_ERROR")
+
+
+def safe_error_response(request: Request, status: int, detail: str) -> JSONResponse:
+    # Preserve the legacy "detail" contract for existing React clients.
+    return JSONResponse(
+        {"detail": detail,
+         "error": {"code": error_code(status),
+                   "requestId": request.state.request_id}},
+        status_code=status,
+        headers={"Cache-Control": "no-store"},
+    )
+
 
 
 class TrialStore(WebStore):
@@ -215,6 +249,20 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
     app = FastAPI(title='知学伴在线试用', docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.add_middleware(RequestBodyLimit, limit=UPLOAD_LIMIT)
 
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(request: Request, error: StarletteHTTPException):
+        # Public details remain user-friendly; identifiers and input data never
+        # enter the machine-readable code or request ID.
+        detail = error.detail if isinstance(error.detail, str) else "请求无法处理。"
+        return safe_error_response(request, error.status_code, detail)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, error: RequestValidationError):
+        # FastAPI's default error items can include raw "input", user text,
+        # filenames or secret form values. Never serialize error.errors().
+        return safe_error_response(request, 422, "请求参数格式无效，请检查后重试。")
+
+
     @app.exception_handler(sqlite3.IntegrityError)
     async def database_constraint(request, error):
         if str(error) == 'trial_library_limit':
@@ -226,7 +274,13 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
 
     @app.middleware('http')
     async def browser_boundary(request: Request, call_next):
+        request.state.request_id = secrets.token_hex(12)
         response = await guarded_request(request, call_next)
+        response.headers['X-Request-ID'] = request.state.request_id
+        if response.status_code >= 400:
+            response.headers['X-Error-Code'] = error_code(response.status_code)
+            if request.url.path.startswith('/api/'):
+                response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'same-origin'
         response.headers['Content-Security-Policy'] = "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
