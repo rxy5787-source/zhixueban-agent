@@ -99,3 +99,43 @@ from evaluation.test_zh06 import (  # noqa: F401
     test_session_cookie_is_saved_without_disclosure,
     test_plan_cli_does_not_require_source_files,
 )
+
+def test_recovery_policy_is_read_only_and_requires_confirmation():
+    from backend.agent_recovery_policy import advise_recovery
+    def case(status, rejection=None, accepted=0, **kwargs):
+        job={'id':'a'*32,'state':status,
+             'result':{'accepted':accepted,'rejected':rejection or [],'files':[]}}
+        return advise_recovery(job, **kwargs)
+
+    waiting=case('running')
+    assert waiting['nextAction']=='wait'
+    assert waiting['willExecuteAutomatically'] is False
+    assert case('succeeded')['nextAction']=='complete'
+    assert case('partial', accepted=1)['nextAction']=='review_accepted'
+    assert case('failed', accepted=1)['nextAction']=='review_accepted'
+    assert case('cancelled')['nextAction']=='stop'
+    assert case('interrupted')['nextAction']=='retry_with_confirmation'
+    assert case('interrupted')['requiresHumanConfirmation'] is True
+    assert case('interrupted', retry_depth=1)['nextAction']=='manual_quality_review'
+    assert case('interrupted', source_available=False)['nextAction']=='replace_source'
+    assert case('failed', existing_retry_id='b'*32)['nextAction']=='open_existing_retry'
+    assert case('failed', rejection=[{'status':'text_unreadable'}])['nextAction']=='replace_source'
+    assert case('failed', rejection=[{'status':'visual_unverified'}])['nextAction']=='manual_quality_review'
+    assert case('failed', rejection=[{'status':'rejected_or_needs_review'}])['nextAction']=='manual_quality_review'
+    assert case('failed', rejection=[{'reasons':['等待本机模型响应超时，请稍后重试。']}])['nextAction']=='retry_with_confirmation'
+    assert case('failed', rejection=[{'reasons':['等待本机模型响应超时，请稍后重试。']}],retry_depth=1)['nextAction']=='manual_quality_review'
+    assert case('failed', rejection=[{'reasons':['some unknown fault']}])['nextAction']=='inspect_failure'
+
+
+def test_recovery_policy_never_returns_private_reasons_or_llm_commands():
+    from backend.agent_recovery_policy import advise_recovery
+    private='super_secret_prompt_SENSITIVE'
+    job={'id':'a'*32,'state':'failed','result':{
+        'accepted':0,'rejected':[{'status':'model instruction to run shell',
+            'reasons':[private],'question':private}],
+        'files':[{'name':private,'parsingError':private}]}}
+    advice=advise_recovery(job)
+    assert advice['nextAction']=='inspect_failure'
+    assert advice['remainingSuggestedRetries']==0
+    assert private not in str(advice)
+    assert advice['willExecuteAutomatically'] is False

@@ -428,6 +428,85 @@ def test_agent_evaluation_migrates_existing_dispatch_receipts(tmp_path):
         assert row['plan_action'] == 'unknown'
 
 
+
+def test_agent_recovery_advice_is_scoped_read_only_and_bounded(tmp_path, monkeypatch):
+    from backend import web_trial
+    monkeypatch.setattr(web_api, 'generation_readiness',
+                        lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    alice, bob = client(app), client(app)
+    alice.get('/')
+    bob.get('/')
+    task = submit_recovery_task(alice, library='sql')
+    endpoint = f'/api/generation-tasks/{task}/recovery-advice'
+    assert bob.get(endpoint).status_code == 404
+    assert client(app).get(endpoint).status_code == 401
+    assert alice.get('/api/generation-tasks/other/recovery-advice').status_code == 404
+    assert alice.get(endpoint).json()['nextAction'] == 'wait'
+    store = browser_store(tmp_path, alice)
+
+    sensitive = 'secret-study-content-cannot-leak'
+    store.update(task, 'failed', '模型生成错误 ' + sensitive,
+                 result={'accepted': 0, 'files': [],
+                         'rejected': [{'reasons': ['等待本机模型响应超时，请稍后重试。',
+                                                  sensitive]}]},
+                 error=sensitive)
+    advised = alice.get(endpoint)
+    assert advised.status_code == 200, advised.text
+    data = advised.json()
+    assert data['nextAction'] == 'retry_with_confirmation'
+    assert data['requiresHumanConfirmation'] is True
+    assert data['willExecuteAutomatically'] is False
+    assert data['remainingSuggestedRetries'] == 1
+    assert sensitive not in advised.text
+    assert data['existingRetryTaskId'] is None
+    with store.db() as db:
+        before = db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0]
+    alice.get(endpoint)
+    with store.db() as db:
+        assert db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0] == before
+
+    retry = alice.post(f'/api/generation-tasks/{task}/retry',
+                       headers={'Origin': ORIGIN})
+    assert retry.status_code == 202, retry.text
+    retry_id = retry.json()['taskId']
+    old = alice.get(endpoint).json()
+    assert old['nextAction'] == 'open_existing_retry'
+    assert old['existingRetryTaskId'] == retry_id
+    store.update(retry_id, 'failed', '模型再次超时',
+                 result={'accepted': 0, 'files': [],
+                         'rejected': [{'reasons': ['等待本机模型响应超时，请稍后重试。']}]})
+    newer = alice.get(f'/api/generation-tasks/{retry_id}/recovery-advice').json()
+    assert newer['nextAction'] == 'manual_quality_review'
+    assert newer['remainingSuggestedRetries'] == 0
+    assert bob.get(f'/api/generation-tasks/{retry_id}/recovery-advice').status_code == 404
+
+
+def test_agent_recovery_advice_missing_source_and_quality_reject(tmp_path, monkeypatch):
+    monkeypatch.setattr(web_api, 'generation_readiness',
+                        lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    browser = client(app)
+    task = submit_recovery_task(browser, library='sql')
+    store = browser_store(tmp_path, browser)
+    advice_url = f'/api/generation-tasks/{task}/recovery-advice'
+    store.update(task, 'failed', '未通过自动质检',
+                 result={'accepted': 0, 'files': [],
+                         'rejected': [{'status': 'rejected_or_needs_review',
+                                       'reasons': ['内容需要人工复核']}]})
+    assert browser.get(advice_url).json()['nextAction'] == 'manual_quality_review'
+    with store.db() as db:
+        job = db.execute('SELECT request FROM jobs WHERE id=?', (task,)).fetchone()
+        file_id = __import__('json').loads(job['request'])['fileIds'][0]
+        source = db.execute('SELECT path FROM files WHERE id=?', (file_id,)).fetchone()
+    Path(source['path']).unlink()
+    response = browser.get(advice_url)
+    assert response.status_code == 200
+    assert response.json()['nextAction'] == 'replace_source'
+    assert 'path' not in response.json()
+    assert response.json()['willExecuteAutomatically'] is False
+
+
 def test_sessions_are_isolated_and_survive_restart(tmp_path):
     app = app_at(tmp_path)
     first, second = client(app), client(app)
