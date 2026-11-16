@@ -237,13 +237,25 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
             return safe_error_response(request, 429, '已达到当前试用空间的知识库数量上限。')
         if str(error) == 'task_retry_depth_limit':
             return safe_error_response(request, 409, '每份任务最多允许一次人工重试，请检查失败原因。')
-        LOGGER.error('Trial data constraint failed', exc_info=error)
+        # Avoid exception stacks/SQL values in logs; only a server-issued
+        # identifier is safe to carry into operational diagnostics.
+        LOGGER.error('Trial constraint failure request_id=%s',
+                     getattr(request.state, 'request_id', 'unavailable'))
         return safe_error_response(request, 500, '学习数据暂时无法保存，请稍后重试。')
 
     @app.middleware('http')
     async def browser_boundary(request: Request, call_next):
         request.state.request_id = secrets.token_hex(12)
-        response = await guarded_request(request, call_next)
+        try:
+            response = await guarded_request(request, call_next)
+        except Exception as error:
+            # Unexpected application failures are mapped at the request
+            # boundary, not serialized with traceback, SQL, files or prompts.
+            # Log only a correlation ID and exception *type*, never its value.
+            LOGGER.error('Trial unhandled request request_id=%s failure_type=%s',
+                         request.state.request_id, type(error).__name__)
+            response = safe_error_response(
+                request, 500, '服务暂时无法处理请求，请稍后重试。')
         response.headers['X-Request-ID'] = request.state.request_id
         if response.status_code >= 400:
             response.headers['X-Error-Code'] = error_code(response.status_code)
