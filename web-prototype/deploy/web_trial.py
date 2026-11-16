@@ -25,6 +25,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .job_store import Store
 from .job_timing import timing_report
+from .web_error_contract import error_code, safe_error_response
 from .web_api import WebStore, init_web_tables, request_store_override, routes
 from .worker import Runner
 from .trial_body_limit import RequestBodyLimit
@@ -42,39 +43,6 @@ UPLOAD_LIMIT = 25 * 1024 * 1024
 COOKIE_LIFETIME = 30 * 24 * 60 * 60
 MAX_JOBS_PER_SPACE = 8
 MAX_LIBRARIES_PER_SPACE = 50
-
-# Stable, non-sensitive codes allow clients to handle errors without parsing
-# localized messages. Request IDs are server-issued, not copied from headers.
-ERROR_CODES = {
-    400: "BAD_REQUEST",
-    401: "AUTH_REQUIRED",
-    403: "FORBIDDEN",
-    404: "NOT_FOUND",
-    408: "REQUEST_TIMEOUT",
-    409: "CONFLICT",
-    413: "PAYLOAD_TOO_LARGE",
-    422: "INVALID_REQUEST",
-    429: "RATE_LIMITED",
-    499: "CLIENT_DISCONNECTED",
-    503: "SERVICE_UNAVAILABLE",
-}
-
-
-def error_code(status: int) -> str:
-    return ERROR_CODES.get(status, "SERVER_ERROR" if status >= 500 else "HTTP_ERROR")
-
-
-def safe_error_response(request: Request, status: int, detail: str) -> JSONResponse:
-    # Preserve the legacy "detail" contract for existing React clients.
-    return JSONResponse(
-        {"detail": detail,
-         "error": {"code": error_code(status),
-                   "requestId": request.state.request_id}},
-        status_code=status,
-        headers={"Cache-Control": "no-store"},
-    )
-
-
 
 class TrialStore(WebStore):
     def __init__(self, root, *, local_preview=False):
@@ -266,11 +234,11 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
     @app.exception_handler(sqlite3.IntegrityError)
     async def database_constraint(request, error):
         if str(error) == 'trial_library_limit':
-            return JSONResponse({'detail': '已达到当前试用空间的知识库数量上限。'}, status_code=429)
+            return safe_error_response(request, 429, '已达到当前试用空间的知识库数量上限。')
         if str(error) == 'task_retry_depth_limit':
-            return JSONResponse({'detail': '每份任务最多允许一次人工重试，请检查失败原因。'}, status_code=409)
+            return safe_error_response(request, 409, '每份任务最多允许一次人工重试，请检查失败原因。')
         LOGGER.error('Trial data constraint failed', exc_info=error)
-        return JSONResponse({'detail': '学习数据暂时无法保存，请稍后重试。'}, status_code=500)
+        return safe_error_response(request, 500, '学习数据暂时无法保存，请稍后重试。')
 
     @app.middleware('http')
     async def browser_boundary(request: Request, call_next):
@@ -289,19 +257,19 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
     async def guarded_request(request, call_next):
         if access_code and (request.url.path == '/api/health' or (
                 request.url.path == '/healthz' and not hmac.compare_digest(request.headers.get('x-trial-probe', '').encode(), probe.encode()))):
-            return JSONResponse({'detail': 'Not Found'}, status_code=404)
+            return safe_error_response(request, 404, 'Not Found')
         needs_origin = request.url.path.startswith('/api/') or request.url.path == '/trial-access'
         if not needs_origin:
             return await call_next(request)
         supplied_origin = request.headers.get('origin')
         if (supplied_origin and supplied_origin != origin) or (
                 request.method not in {'GET', 'HEAD', 'OPTIONS'} and supplied_origin != origin):
-            return JSONResponse({'detail': '请从试用页面提交请求。'}, status_code=403)
+            return safe_error_response(request, 403, '请从试用页面提交请求。')
         if request.url.path == '/trial-access':
             return await call_next(request)
         ident = existing_space(request)
         if ident is None:
-            return JSONResponse({'detail': '请打开试用首页并输入访问码。' if access_code else '请刷新试用首页以建立浏览器会话。'}, status_code=401)
+            return safe_error_response(request, 401, '请打开试用首页并输入访问码。' if access_code else '请刷新试用首页以建立浏览器会话。')
         override = request_store_override.set(spaces.get(ident))
         try:
             response = await call_next(request)
