@@ -4,9 +4,9 @@
 
 ## 已实现的确定性离机测试
 
-- **1、3、5个独立浏览器试用空间**：使用并发HTTP multipart表单发送同一份固定SQL示例资料，真实走FastAPI路由、上传校验、SQLite持久化及任务创建。检查接受数、任务ID唯一、每个空间的数据库归属。
+- **1、3、5个独立浏览器试用空间**：使用并发HTTP multipart表单发送同一份固定SQL示例资料，真实走FastAPI路由、上传校验、SQLite持久化及任务创建。检查接受数、任务ID唯一、每个空间的数据库归属。上传网关的 `RequestBodyLimit` 同时只允许4个请求占用缓冲槽位；并发5时可能返回暂时性429，测试必须在第一轮结束后保持同一个请求标识重试，验证无丢失和重复提交。
 - **单Worker轮询与FIFO**：先对待处理任务设定严格递增的固定创建时间，再调用实际 `TrialQueue.oldest_queue()` 和 `Store.claim()`，要求没有重复领取、顺序正确、各自终态成功、数据库无残留的活动任务。出题计算由模拟结果替代，不加载Qwen。
-- **同一空间五个并发请求**：沿用已有 `TrialStore.check_submission` 资源政策，必须至多有1个被接受，其他请求返回409；这不是支持同一学生并行运行5个模型任务。
+- **同一空间五个并发请求**：沿用已有 `TrialStore.check_submission` 资源政策，必须至多有1个被接受，其他请求通常返回409；当上传网关槽位已满时可能先返回429。对于429，在网关空闲后重新提交应得到409，不得越过单空间限额；这不是支持同一学生并行运行5个模型任务。
 - **跨空间取消隔离**：取消A的任务不得改变B空间任务，也不能借任务ID跨空间读取。
 
 这些测试使用真实数据库和实际入队代码，仅模拟任务计算阶段。因此能够证明**离机排队正确性**，而不是模型推理耗时、真实并行生成能力或内存占用。
@@ -16,10 +16,10 @@
 回归测试输出形如：
 
 ```text
-ZH07_OFFDEVICE visitors=3 concurrent_ingress_ms=... accepted=3 simulated_terminal=3 model_calls=0
+ZH07_OFFDEVICE visitors=3 concurrent_ingress_ms=... upload_backpressure_429=... accepted_after_retry=3 simulated_terminal=3 model_calls=0
 ```
 
-`concurrent_ingress_ms` 只代表CI机器上本次固定样本的**HTTP入队总体墙钟时间**，不是单个请求延迟、任务生成耗时、Qwen吞吐率或者生产部署容量；不应当拿来和不同机器、模型上的结果直接比较。
+`upload_backpressure_429` 为第一轮网关缓冲槽不足产生的429数量，与单空间配额限制不同。`accepted_after_retry` 为同一请求标识在缓冲槽释放后成功入队数量。`concurrent_ingress_ms` 只代表CI机器上本次固定样本的**HTTP入队总体墙钟时间**，不是单个请求延迟、任务生成耗时、Qwen吞吐率或者生产部署容量；不应当拿来和不同机器、模型上的结果直接比较。
 
 系统目前使用**单台TrialQueue顺序消费**多个独立访客空间，且**单空间只能存在一个queued/running出题任务**；这保证体验与资源限制，但不能推断它支持5个同时进行的模型推理。
 
