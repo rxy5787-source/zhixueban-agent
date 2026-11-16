@@ -102,7 +102,7 @@ def advise_recovery(
         "requiresHumanConfirmation": action == "retry_with_confirmation",
         "willExecuteAutomatically": False,
         "remainingSuggestedRetries": max(0, 1 - max(0, retry_depth))
-        if state in {"failed", "interrupted"} else 0,
+        if action == "retry_with_confirmation" else 0,
         "existingRetryTaskId": existing_retry_id,
         "acceptedCount": accepted,
         "note": "Automated validation does not establish factual correctness.",
