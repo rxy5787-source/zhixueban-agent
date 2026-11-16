@@ -94,6 +94,32 @@ def advise_recovery(
 
     if action not in ACTION_CODES:
         raise RuntimeError("Unrecognized recovery action")
+    from .agent_decision_audit import RECOVERY_VERSION
+    # This trace contains only anonymous, strictly typed branch predicates.
+    # Never persist source content, exception strings, prompt or topic names.
+    decision_trace = {
+        "policyVersion": RECOVERY_VERSION,
+        "features": {
+            "taskStatus": state if state in TERMINAL | {"queued", "running"} else "unknown",
+            "acceptedCount": accepted,
+            "failureCategory": reason,
+            "existingRetry": bool(existing_retry_id),
+            "retryDepth": min(max(retry_depth, 0), 2),
+            "sourceAvailable": bool(source_available),
+        },
+        "selectedAction": action,
+        "reasonCode": {
+            "wait": "task_in_progress",
+            "complete": "task_succeeded",
+            "review_accepted": "partial_results_exist",
+            "stop": "user_cancelled",
+            "open_existing_retry": "retry_receipt_exists",
+            "replace_source": "source_unavailable_or_unreadable",
+            "manual_quality_review": "human_review_required",
+            "retry_with_confirmation": "recoverable_with_confirmation",
+            "inspect_failure": "failure_not_classified",
+        }[action],
+    }
     return {
         "taskId": job["id"],
         "status": state if state in TERMINAL | {"queued", "running"} else "unknown",
@@ -106,4 +132,5 @@ def advise_recovery(
         "existingRetryTaskId": existing_retry_id,
         "acceptedCount": accepted,
         "note": "Automated validation does not establish factual correctness.",
+        "decisionTrace": decision_trace,
     }
