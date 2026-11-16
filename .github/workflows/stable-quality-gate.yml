@@ -58,6 +58,13 @@ jobs:
         run: |
           python -m pip install -r python-ai/requirements.txt
           python -m pip check
+      - name: Audit consolidated CI configuration
+        shell: pwsh
+        run: |
+          python -m pytest -q scripts/tests/test_ci_consolidation.py
+          if ($LASTEXITCODE -ne 0) { throw 'CI consolidation unit tests failed' }
+          python scripts/check_ci_consolidation.py --output ci-consolidation-audit.json
+          if ($LASTEXITCODE -ne 0) { throw 'CI consolidation audit failed' }
       - name: Test integration audit and verify pinned PR ancestry
         shell: pwsh
         run: |
