@@ -1,4 +1,7 @@
 import concurrent.futures
+import threading
+from uuid import uuid4
+import pytest
 from pathlib import Path
 import time
 
@@ -132,6 +135,189 @@ def test_stage_timing_direct_algorithm_handles_empty_and_clock_regression():
     assert result['phaseElapsedMs']['generation'] == 6000
     assert 'SENSITIVE' not in str(result)
 
+
+
+@pytest.mark.parametrize('visitors', [1, 3, 5])
+def test_zh07_concurrent_visitors_submit_and_single_worker_fifo(tmp_path, monkeypatch, visitors):
+    """Real multipart HTTP submissions and SQLite; deterministic simulated Worker.
+
+    This is an off-device admission/queue correctness test, NOT a Qwen
+    throughput or memory benchmark. Each visitor has their own DB and quota.
+    """
+    from backend.web_trial import TrialQueue, TrialSpaces
+
+    monkeypatch.setattr(web_api, 'generation_readiness',
+                        lambda: {'generationReady': True})
+    app = app_at(tmp_path, maximum=8)
+    browsers = [client(app) for _ in range(visitors)]
+    for browser in browsers:
+        assert browser.get('/').status_code == 200
+
+    barrier = threading.Barrier(visitors)
+    request_ids = [uuid4().hex for _ in range(visitors)]
+    def submit(index, *, burst=True):
+        browser = browsers[index]
+        if burst:
+            barrier.wait(timeout=20)
+        reply = browser.post(
+            '/api/generation-tasks',
+            headers={'Origin': ORIGIN},
+            files={'files': (f'lesson-{index}.txt',
+                              b'WHERE filters rows before GROUP BY. HAVING filters grouped results.',
+                              'text/plain')},
+            data={
+                'libraryId': 'shared-slug',
+                'libraryName': 'SQL',
+                'questionCount': '1',
+                'requirements': 'Test WHERE and HAVING.',
+                'clientRequestId': request_ids[index],
+            },
+        )
+        return reply
+
+    # Real concurrent ingress; no local model or background worker started.
+    start = time.perf_counter()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=visitors) as pool:
+        responses = list(pool.map(submit, range(visitors)))
+    ingress_ms = round(1000 * (time.perf_counter() - start))
+    # RequestBodyLimit has four upload slots. At burst=5 a fifth upload
+    # may get 429 (backpressure). Retry that same submission *after* burst,
+    # preserving its idempotency token and never raising the slot limit.
+    transient_429 = sum(reply.status_code == 429 for reply in responses)
+    assert all(reply.status_code in (202, 429) for reply in responses), [
+        (reply.status_code, reply.text[:220]) for reply in responses
+    ]
+    for index, reply in enumerate(responses):
+        if reply.status_code == 429:
+            assert '当前上传较多' in reply.text
+            responses[index] = submit(index, burst=False)
+    assert all(reply.status_code == 202 for reply in responses), [
+        (reply.status_code, reply.text[:220]) for reply in responses
+    ]
+    ids = [reply.json()['taskId'] for reply in responses]
+    assert len(ids) == len(set(ids)) == visitors
+    spaces_root = tmp_path / 'data' / 'spaces'
+    assert len(list(spaces_root.iterdir())) == visitors
+
+    stores = [browser_store(tmp_path, browser) for browser in browsers]
+    for index, store in enumerate(stores):
+        assert store.get(ids[index])['state'] == 'queued'
+
+    # Deterministic time ordering lets us verify scheduler fairness rather
+    # than making flaky assertions about thread scheduling/timer resolution.
+    for index, store in enumerate(stores):
+        with store.db() as db:
+            db.execute('UPDATE jobs SET created=? WHERE id=?', (1000.0 + index, ids[index]))
+    spaces = TrialSpaces(spaces_root, maximum=8)
+    queue = TrialQueue(tmp_path / 'data' / 'queue-deterministic', spaces)
+
+    claimed = []
+    for _ in range(visitors):
+        chosen = queue.oldest_queue()
+        assert chosen is not None
+        job = chosen.claim()
+        assert job is not None
+        assert job['id'] not in claimed
+        claimed.append(job['id'])
+        # Stub the CPU/model work while exercising real persistent transitions.
+        chosen.update(job['id'], 'succeeded', '测试模拟完成',
+                      {'content': {'libraries': []}})
+    assert claimed == ids
+    assert queue.oldest_queue() is None
+    assert len(claimed) == visitors
+    for index, store in enumerate(stores):
+        assert store.get(ids[index])['state'] == 'succeeded'
+        with store.db() as db:
+            assert db.execute(
+                "SELECT COUNT(*) FROM job_events WHERE job_id=? AND stage='准备解析'",
+                (ids[index],),
+            ).fetchone()[0] == 1
+            assert db.execute(
+                "SELECT COUNT(*) FROM jobs WHERE state IN ('queued','running')"
+            ).fetchone()[0] == 0
+
+    # Measured value is the API ingress of *this CI simulator*, not inferred
+    # Qwen throughput. All payloads are fixed fixtures.
+    print(f'ZH07_OFFDEVICE visitors={visitors} concurrent_ingress_ms={ingress_ms} '
+          f'upload_backpressure_429={transient_429} accepted_after_retry={len(ids)} '
+          f'simulated_terminal={len(claimed)} model_calls=0')
+
+
+def test_zh07_single_space_concurrent_submissions_admit_at_most_one(tmp_path, monkeypatch):
+    """The existing one-active-job-per-space policy survives racing uploads."""
+    monkeypatch.setattr(web_api, 'generation_readiness',
+                        lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    master = client(app)
+    assert master.get('/').status_code == 200
+    siblings = [client(app) for _ in range(5)]
+    for sibling in siblings:
+        sibling.cookies.update(master.cookies)
+
+    barrier = threading.Barrier(len(siblings))
+    def submit(index):
+        barrier.wait(timeout=20)
+        return siblings[index].post(
+            '/api/generation-tasks',
+            headers={'Origin': ORIGIN},
+            files={'files': (f'chapter-{index}.txt',
+                             b'WHERE filters rows. HAVING filters groups.',
+                             'text/plain')},
+            data={'libraryId': 'shared', 'libraryName': 'SQL',
+                  'questionCount': '1', 'requirements': 'WHERE',
+                  'clientRequestId': uuid4().hex},
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(siblings)) as pool:
+        responses = list(pool.map(submit, range(len(siblings))))
+    codes = [reply.status_code for reply in responses]
+    assert codes.count(202) == 1, [(r.status_code, r.text[:150]) for r in responses]
+    # Burst uploads may hit the bounded request-body slots (429) before
+    # reaching the per-space active-job check (409).
+    assert all(status in (202, 409, 429) for status in codes), codes
+    for index, status in enumerate(codes):
+        if status == 429:
+            # Once upload slots are free, the same visitor hits the 409
+            # per-space queue policy, not a second accepted job.
+            retry = siblings[index].post(
+                '/api/generation-tasks', headers={'Origin': ORIGIN},
+                files={'files': ('retry.txt', b'WHERE filters rows.', 'text/plain')},
+                data={'libraryId': 'shared', 'libraryName': 'SQL',
+                      'questionCount': '1', 'requirements': 'WHERE',
+                      'clientRequestId': uuid4().hex},
+            )
+            assert retry.status_code == 409, retry.text
+    with browser_store(tmp_path, master).db() as db:
+        assert db.execute('SELECT COUNT(*) FROM jobs').fetchone()[0] == 1
+        assert db.execute("SELECT COUNT(*) FROM jobs WHERE state='queued'").fetchone()[0] == 1
+
+
+def test_zh07_cancel_one_space_does_not_interrupt_neighbor(tmp_path, monkeypatch):
+    """One visitor canceling an active job never alters another visitor's DB."""
+    monkeypatch.setattr(web_api, 'generation_readiness',
+                        lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    alice, bob = client(app), client(app)
+    alice.get('/')
+    bob.get('/')
+    jobs = [submit_recovery_task(browser, library='same-slug')
+            for browser in (alice, bob)]
+    alice_store = browser_store(tmp_path, alice)
+    bob_store = browser_store(tmp_path, bob)
+    assert alice_store.claim()['id'] == jobs[0]
+    assert bob_store.claim()['id'] == jobs[1]
+    canceled = alice.post(f'/api/generation-tasks/{jobs[0]}/cancel',
+                          headers={'Origin': ORIGIN})
+    assert canceled.status_code == 200, canceled.text
+    # In real operation, the supervising process observes cancel=1 and
+    # transitions to cancelled; here that supervisor completion is simulated.
+    alice_store.update(jobs[0], 'cancelled', '已取消')
+    bob_store.update(jobs[1], 'succeeded', '测试模拟完成',
+                     {'content': {'libraries': []}})
+    assert alice_store.get(jobs[0])['state'] == 'cancelled'
+    assert bob_store.get(jobs[1])['state'] == 'succeeded'
+    assert alice.get(f'/api/generation-tasks/{jobs[1]}').status_code == 404
+    assert bob.get(f'/api/generation-tasks/{jobs[0]}').status_code == 404
 
 def test_sessions_are_isolated_and_survive_restart(tmp_path):
     app = app_at(tmp_path)
