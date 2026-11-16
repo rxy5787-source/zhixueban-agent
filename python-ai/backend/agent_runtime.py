@@ -174,10 +174,14 @@ class AgentRuntime:
                 raise ValueError("Provide up to 12 knowledge points")
             state["points"] = points
 
+        from .agent_decision_audit import BOUNDED_VERSION, runtime_choice
         events: list[dict] = []
+        decisions: list[dict] = []
         failure = ""
         for step in range(self.planner.max_steps):
-            name = self.planner.next_skill(state)
+            decision = runtime_choice(state, self.planner, step + 1)
+            decisions.append(decision)
+            name = decision["selectedSkill"]
             if name is None:
                 break
             start = time.monotonic()
@@ -186,16 +190,22 @@ class AgentRuntime:
                 state.update(result)
                 if name == "review":
                     state.pop("candidates", None)
+                decision["outcome"] = "ok"
                 events.append({"step": step + 1, "skill": name, "status": "ok",
                                "durationMs": round((time.monotonic() - start) * 1000)})
             except Exception as exc:
-                # Do not leak source text, prompts, responses or document contents.
+                # Keep exception text, source, goal, candidate payload and
+                # generated feedback out of the decision audit.
                 failure = f"{name}: {type(exc).__name__}"
+                decision["outcome"] = "failed"
+                decision["stopReasonCode"] = "skill_execution_failed"
                 events.append({"step": step + 1, "skill": name, "status": "failed",
                                "errorType": type(exc).__name__})
                 break
         else:
-            if self.planner.next_skill(state) is not None:
+            decision = runtime_choice(state, self.planner, self.planner.max_steps + 1)
+            decisions.append(decision)
+            if decision["reasonCode"] == "step_budget_exhausted":
                 failure = "step_budget_exceeded"
 
         accepted = state["accepted"]
@@ -206,4 +216,10 @@ class AgentRuntime:
             "events": events, "attempts": state["attempts"],
             "requestedCount": count, "acceptedCount": len(accepted),
             "error": failure or ("" if accepted else "No validated questions"),
+            "decisionTrace": {
+                "policyVersion": BOUNDED_VERSION,
+                "budget": {"maxAttempts": self.planner.max_attempts,
+                           "maxSteps": self.planner.max_steps},
+                "decisions": decisions,
+            },
         }
