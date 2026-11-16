@@ -48,7 +48,7 @@ try {
         }
     }
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'web_trial.py') -Destination (Join-Path $stage 'server/backend')
-    foreach ($name in 'trial_body_limit.py', 'trial_access.html', 'web_submissions.py', 'resumable_uploads.py', 'study_chat.py', 'study_mnemonics.py') {
+    foreach ($name in 'trial_body_limit.py', 'web_error_contract.py', 'trial_access.html', 'web_submissions.py', 'resumable_uploads.py', 'study_chat.py', 'study_mnemonics.py') {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $stage 'server/backend')
     }
     git -C (Join-Path $stage 'server') apply (Join-Path $PSScriptRoot 'backend.patch')

@@ -16,13 +16,16 @@ import time
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .job_store import Store
 from .job_timing import timing_report
+from .web_error_contract import error_code, safe_error_response
 from .web_api import WebStore, init_web_tables, request_store_override, routes
 from .worker import Runner
 from .trial_body_limit import RequestBodyLimit
@@ -40,7 +43,6 @@ UPLOAD_LIMIT = 25 * 1024 * 1024
 COOKIE_LIFETIME = 30 * 24 * 60 * 60
 MAX_JOBS_PER_SPACE = 8
 MAX_LIBRARIES_PER_SPACE = 50
-
 
 class TrialStore(WebStore):
     def __init__(self, root, *, local_preview=False):
@@ -215,18 +217,38 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
     app = FastAPI(title='知学伴在线试用', docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.add_middleware(RequestBodyLimit, limit=UPLOAD_LIMIT)
 
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error(request: Request, error: StarletteHTTPException):
+        # Public details remain user-friendly; identifiers and input data never
+        # enter the machine-readable code or request ID.
+        detail = error.detail if isinstance(error.detail, str) else "请求无法处理。"
+        return safe_error_response(request, error.status_code, detail)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, error: RequestValidationError):
+        # FastAPI's default error items can include raw "input", user text,
+        # filenames or secret form values. Never serialize error.errors().
+        return safe_error_response(request, 422, "请求参数格式无效，请检查后重试。")
+
+
     @app.exception_handler(sqlite3.IntegrityError)
     async def database_constraint(request, error):
         if str(error) == 'trial_library_limit':
-            return JSONResponse({'detail': '已达到当前试用空间的知识库数量上限。'}, status_code=429)
+            return safe_error_response(request, 429, '已达到当前试用空间的知识库数量上限。')
         if str(error) == 'task_retry_depth_limit':
-            return JSONResponse({'detail': '每份任务最多允许一次人工重试，请检查失败原因。'}, status_code=409)
+            return safe_error_response(request, 409, '每份任务最多允许一次人工重试，请检查失败原因。')
         LOGGER.error('Trial data constraint failed', exc_info=error)
-        return JSONResponse({'detail': '学习数据暂时无法保存，请稍后重试。'}, status_code=500)
+        return safe_error_response(request, 500, '学习数据暂时无法保存，请稍后重试。')
 
     @app.middleware('http')
     async def browser_boundary(request: Request, call_next):
+        request.state.request_id = secrets.token_hex(12)
         response = await guarded_request(request, call_next)
+        response.headers['X-Request-ID'] = request.state.request_id
+        if response.status_code >= 400:
+            response.headers['X-Error-Code'] = error_code(response.status_code)
+            if request.url.path.startswith('/api/'):
+                response.headers['Cache-Control'] = 'no-store'
         response.headers['X-Content-Type-Options'] = 'nosniff'
         response.headers['Referrer-Policy'] = 'same-origin'
         response.headers['Content-Security-Policy'] = "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
@@ -235,19 +257,19 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
     async def guarded_request(request, call_next):
         if access_code and (request.url.path == '/api/health' or (
                 request.url.path == '/healthz' and not hmac.compare_digest(request.headers.get('x-trial-probe', '').encode(), probe.encode()))):
-            return JSONResponse({'detail': 'Not Found'}, status_code=404)
+            return safe_error_response(request, 404, 'Not Found')
         needs_origin = request.url.path.startswith('/api/') or request.url.path == '/trial-access'
         if not needs_origin:
             return await call_next(request)
         supplied_origin = request.headers.get('origin')
         if (supplied_origin and supplied_origin != origin) or (
                 request.method not in {'GET', 'HEAD', 'OPTIONS'} and supplied_origin != origin):
-            return JSONResponse({'detail': '请从试用页面提交请求。'}, status_code=403)
+            return safe_error_response(request, 403, '请从试用页面提交请求。')
         if request.url.path == '/trial-access':
             return await call_next(request)
         ident = existing_space(request)
         if ident is None:
-            return JSONResponse({'detail': '请打开试用首页并输入访问码。' if access_code else '请刷新试用首页以建立浏览器会话。'}, status_code=401)
+            return safe_error_response(request, 401, '请打开试用首页并输入访问码。' if access_code else '请刷新试用首页以建立浏览器会话。')
         override = request_store_override.set(spaces.get(ident))
         try:
             response = await call_next(request)
