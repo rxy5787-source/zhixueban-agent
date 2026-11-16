@@ -139,3 +139,130 @@ def test_recovery_policy_never_returns_private_reasons_or_llm_commands():
     assert advice['remainingSuggestedRetries']==0
     assert private not in str(advice)
     assert advice['willExecuteAutomatically'] is False
+
+
+def test_decision_replay_success_retry_failure_and_budgets():
+    from copy import deepcopy
+    from backend.agent_decision_audit import replay_runtime_trace
+
+    normal = AgentRuntime(registry=fake_registry()).run(TEXT, "题目", count=1)
+    assert replay_runtime_trace(normal["decisionTrace"])["matched"] is True
+    assert normal["decisionTrace"]["decisions"][-1]["reasonCode"] == "requested_count_reached"
+
+    retried = AgentRuntime(registry=fake_registry(True)).run(TEXT, "题目", count=1)
+    assert replay_runtime_trace(retried["decisionTrace"])["matched"] is True
+    skills = [e["selectedSkill"] for e in retried["decisionTrace"]["decisions"]]
+    assert skills == ["prepare", "extract", "generate", "review",
+                      "generate", "review", None]
+
+    capped = AgentRuntime(registry=fake_registry(),
+                          planner=BoundedPlanner(max_steps=3)).run(TEXT, "题目", count=1)
+    assert capped["error"] == "step_budget_exceeded"
+    assert capped["decisionTrace"]["decisions"][-1]["reasonCode"] == "step_budget_exhausted"
+    assert replay_runtime_trace(capped["decisionTrace"])["matched"] is True
+
+    altered = deepcopy(normal["decisionTrace"])
+    altered["decisions"][1]["selectedSkill"] = "shell"
+    mismatch = replay_runtime_trace(altered)
+    assert mismatch == {"matched": False, "divergentStep": 2,
+                        "reason": "policy_choice_changed"}
+
+    changed_budget = replay_runtime_trace(
+        normal["decisionTrace"], planner=BoundedPlanner(max_attempts=1))
+    assert changed_budget["reason"] == "policy_budget_changed"
+
+    altered = deepcopy(normal["decisionTrace"])
+    altered["decisions"][1]["features"]["materialPresent"] = "yes"
+    assert replay_runtime_trace(altered)["reason"] == "invalid_predicates"
+
+    altered = deepcopy(normal["decisionTrace"])
+    altered["decisions"].append({"step": 8, "features": {}, "selectedSkill": None})
+    assert replay_runtime_trace(altered)["reason"] == "malformed_sequence"
+
+
+def test_decision_trace_records_only_anonymous_predicates():
+    from backend.agent_decision_audit import replay_runtime_trace
+    secret = "PRIVATE_STUDY_SOURCE_password_DO_NOT_LOG"
+    registry = SkillRegistry()
+    registry.register(Skill("prepare", frozenset({"source_text"}),
+                            frozenset({"material"}),
+                            lambda state: {"material": state["source_text"]}))
+    registry.register(Skill("extract", frozenset({"material"}),
+                            frozenset({"points"}),
+                            lambda _: {"points": [{"name": secret}]}))
+    registry.register(Skill("generate", frozenset({"material", "goal", "points",
+                            "count", "attempts", "accepted"}),
+                            frozenset({"candidates", "attempts"}),
+                            lambda s: {"candidates": [{"question": secret}],
+                                       "attempts": s["attempts"] + 1}))
+    registry.register(Skill("review", frozenset({"candidates", "material",
+                            "accepted", "rejected"}),
+                            frozenset({"accepted", "rejected", "feedback"}),
+                            lambda _: {"accepted": [{"question": secret}],
+                                       "rejected": [], "feedback": secret}))
+    actual = AgentRuntime(registry=registry).run(
+        secret * 3, "my private instructions " + secret, count=1)
+    trace = actual["decisionTrace"]
+    assert replay_runtime_trace(trace)["matched"] is True
+    assert secret not in str(trace)
+    assert "question" not in str(trace)
+    assert "feedback" not in str(trace)
+    assert "material" not in str(trace).replace("materialPresent", "")
+    assert all(set(row) == {"step", "features", "selectedSkill", "reasonCode",
+                           "outcome", "stopReasonCode"}
+               for row in trace["decisions"])
+
+
+def test_decision_trace_failed_skill_does_not_leak_exception():
+    from backend.agent_decision_audit import replay_runtime_trace
+    secret = "PRIVATE_STUDY_SOURCE_password_DO_NOT_LOG"
+    registry = SkillRegistry()
+    def explode(state):
+        raise RuntimeError(secret + state["source_text"])
+    registry.register(Skill("prepare", frozenset({"source_text"}),
+                            frozenset({"material"}), explode))
+    failed = AgentRuntime(registry=registry).run(
+        secret * 4, "生成一题", count=1)
+    trace = failed["decisionTrace"]
+    assert replay_runtime_trace(trace)["matched"] is True
+    assert trace["decisions"][-1]["stopReasonCode"] == "skill_execution_failed"
+    assert secret not in str(trace)
+
+
+def test_decision_replay_rejects_unknown_policy_version():
+    from backend.agent_decision_audit import replay_runtime_trace
+    with pytest.raises(ValueError, match="policy version"):
+        replay_runtime_trace({"policyVersion": "invented", "decisions": []})
+
+
+def test_recovery_replay_consistency_and_tampering():
+    from copy import deepcopy
+    from backend.agent_decision_audit import replay_recovery_trace
+    from backend.agent_recovery_policy import advise_recovery, TIMEOUT_REASON
+    scenarios = [
+        ("queued", {}, {}, "wait"),
+        ("succeeded", {}, {}, "complete"),
+        ("failed", {"accepted": 2}, {}, "review_accepted"),
+        ("cancelled", {}, {}, "stop"),
+        ("failed", {"rejected": [{"status": "text_unreadable"}]}, {}, "replace_source"),
+        ("failed", {"rejected": [{"status": "visual_unverified"}]}, {},
+         "manual_quality_review"),
+        ("failed", {"rejected": [{"status": "rejected_or_needs_review"}]}, {},
+         "manual_quality_review"),
+        ("failed", {"rejected": [{"reasons": [TIMEOUT_REASON]}]}, {},
+         "retry_with_confirmation"),
+        ("interrupted", {}, {"retry_depth": 1}, "manual_quality_review"),
+        ("failed", {}, {"existing_retry_id": "f"*32}, "open_existing_retry"),
+        ("failed", {}, {}, "inspect_failure"),
+        ("interrupted", {}, {"source_available": False}, "replace_source"),
+    ]
+    for status, result, options, expected_action in scenarios:
+        advice = advise_recovery({"id": "a"*32, "state": status, "result": result},
+                                 **options)
+        assert advice["nextAction"] == expected_action
+        assert replay_recovery_trace(advice["decisionTrace"])["matched"] is True
+        assert "a"*32 not in str(advice["decisionTrace"])
+    one = advise_recovery({"id": "a"*32, "state": "interrupted", "result": {}})
+    forged = deepcopy(one["decisionTrace"])
+    forged["selectedAction"] = "run_shell"
+    assert replay_recovery_trace(forged)["reason"] == "policy_choice_changed"
