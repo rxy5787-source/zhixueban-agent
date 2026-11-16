@@ -3,7 +3,7 @@
 import asyncio
 from tempfile import SpooledTemporaryFile
 
-from starlette.responses import JSONResponse
+from .web_error_contract import error_response
 
 
 class RequestBodyLimit:
@@ -61,5 +61,8 @@ class RequestBodyLimit:
                 await self.app(scope, replay, send)
 
     async def reject(self, scope, receive, send, status, detail):
-        response = JSONResponse({'detail': detail}, status_code=status, headers={'Cache-Control': 'no-store'})
+        # The outer HTTP middleware issues request_id before body buffering.
+        # This ASGI middleware must use the same error contract on early 413/429.
+        request_id = scope.get('state', {}).get('request_id')
+        response = error_response(status, detail, request_id)
         await response(scope, receive, send)
