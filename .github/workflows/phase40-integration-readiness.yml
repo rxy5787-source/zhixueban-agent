@@ -44,13 +44,6 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Release candidate does not contain main HEAD' }
           $count = git rev-list --count origin/main..HEAD
           Write-Host "Release candidate is ahead of main by $count commits. This does not merge it."
-      - name: Test integration audit and verify pinned PR ancestry
-        shell: pwsh
-        run: |
-          python -m pytest -q scripts/tests/test_integration_readiness.py
-          if ($LASTEXITCODE -ne 0) { throw 'Integration audit unit tests failed' }
-          python scripts/check_integration_readiness.py --manifest docs/integration/phase40.json --output integration-audit.json
-          if ($LASTEXITCODE -ne 0) { throw 'Pinned mainline history is not contained in candidate' }
       - name: Build Web frontend
         working-directory: web-prototype
         run: |
@@ -60,6 +53,13 @@ jobs:
         run: |
           python -m pip install -r python-ai/requirements.txt
           python -m pip check
+      - name: Test integration audit and verify pinned PR ancestry
+        shell: pwsh
+        run: |
+          python -m pytest -q scripts/tests/test_integration_readiness.py
+          if ($LASTEXITCODE -ne 0) { throw 'Integration audit unit tests failed' }
+          python scripts/check_integration_readiness.py --manifest docs/integration/phase40.json --output integration-audit.json
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned mainline history is not contained in candidate' }
       - name: Test Agent runtime and study planning
         shell: pwsh
         run: |
