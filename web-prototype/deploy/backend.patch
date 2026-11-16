@@ -41,11 +41,12 @@
          db.executescript('''
          CREATE TABLE IF NOT EXISTS web_libraries(id TEXT PRIMARY KEY,title TEXT NOT NULL,created REAL NOT NULL);
          CREATE TABLE IF NOT EXISTS web_deleted_libraries(library_id TEXT PRIMARY KEY,deleted REAL NOT NULL);
-@@ -42,6 +49,7 @@
+@@ -42,7 +49,8 @@
          CREATE TABLE IF NOT EXISTS web_questions(question_id TEXT NOT NULL,library_id TEXT NOT NULL,task_id TEXT NOT NULL,payload TEXT NOT NULL,saved REAL NOT NULL,PRIMARY KEY(library_id,question_id));
          ''')
          web_practice.init_tables(db)
 +        web_submissions.init_tables(db)
+         install_retry_guard(db)
  init_web_tables()
  
  @asynccontextmanager
