@@ -91,6 +91,34 @@ def _trace_rows(trace: dict, version: str, keys: set[str]) -> list[dict]:
     return rows
 
 
+def _runtime_transition_valid(before: dict, after: dict, skill: str) -> bool:
+    """Validate declared anonymous state transitions, not data provenance."""
+    expected = dict(before)
+    if skill == "prepare":
+        expected["materialPresent"] = True
+    elif skill == "extract":
+        expected["pointsPresent"] = True
+    elif skill == "generate":
+        expected["candidatesPresent"] = True
+        expected["attempts"] += 1
+    elif skill == "review":
+        if after["acceptedCount"] < before["acceptedCount"]:
+            return False
+        expected["candidatesPresent"] = False
+        expected["acceptedCount"] = after["acceptedCount"]
+    else:
+        return False
+    return after == expected
+
+
+def _study_transition_valid(before: dict, after: dict, skill: str) -> bool:
+    if skill == "get_weak_knowledge_points":
+        return after["weakResultPresent"] and not after["planPresent"]
+    if skill in ("plan_diagnostic", "plan_targeted", "plan_review"):
+        return after == {**before, "planPresent": True}
+    return False
+
+
 def replay_runtime_trace(trace: dict, planner=None) -> dict:
     from .agent_runtime import BoundedPlanner
     rows = _trace_rows(trace, BOUNDED_VERSION, {"policyVersion", "budget", "decisions"})
@@ -113,6 +141,16 @@ def replay_runtime_trace(trace: dict, planner=None) -> dict:
             wanted = runtime_choice(_minimal_bounded_state(row["features"]), active, index)
         except (TypeError, ValueError, KeyError):
             return {"matched": False, "divergentStep": index, "reason": "invalid_predicates"}
+        features = row["features"]
+        if index == 1:
+            if (features["materialPresent"] or features["candidatesPresent"]
+                    or features["acceptedCount"] != 0 or features["attempts"] != 0):
+                return {"matched": False, "divergentStep": index, "reason": "invalid_initial_state"}
+        else:
+            prior = rows[index - 2]
+            if not _runtime_transition_valid(prior["features"], features, prior["selectedSkill"]):
+                return {"matched": False, "divergentStep": index,
+                        "reason": "inconsistent_state_transition"}
         if row["selectedSkill"] != wanted["selectedSkill"] or row["reasonCode"] != wanted["reasonCode"]:
             return {"matched": False, "divergentStep": index, "reason": "policy_choice_changed"}
         if wanted["selectedSkill"] is None:
@@ -186,6 +224,16 @@ def replay_study_trace(trace: dict, planner=None) -> dict:
                                     "weak_points": [None] * f["weakPointCount"]}
         if f["planPresent"]:
             state["plan"] = {}
+        if index == 1:
+            if (f["weakResultPresent"] or f["planPresent"]
+                    or f["weakStatus"] is not None or f["weakPointCount"] != 0):
+                return {"matched": False, "divergentStep": index,
+                        "reason": "invalid_initial_state"}
+        else:
+            prior = rows[index - 2]
+            if not _study_transition_valid(prior["features"], f, prior["selectedSkill"]):
+                return {"matched": False, "divergentStep": index,
+                        "reason": "inconsistent_state_transition"}
         wanted = study_choice(state, active, index)
         if wanted["selectedSkill"] != row["selectedSkill"] or wanted["reasonCode"] != row["reasonCode"]:
             return {"matched": False, "divergentStep": index, "reason": "policy_choice_changed"}
