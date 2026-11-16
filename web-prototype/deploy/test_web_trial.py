@@ -1396,3 +1396,103 @@ def test_phase35_concurrent_spaces_have_private_diagnostics_and_independent_life
                 'SELECT COUNT(*) FROM job_events WHERE job_id=? AND stage=?',
                 (task_id, '准备解析')
             ).fetchone()[0] == 1
+
+
+def test_phase37_api_error_contract_is_stable_across_auth_and_validation(tmp_path):
+    """Sensitive input never appears in 422 responses or diagnostic headers."""
+    app = app_at(tmp_path)
+    browser = client(app)
+
+    anonymous = browser.get('/api/libraries')
+    assert anonymous.status_code == 401
+    assert anonymous.json()['detail']
+    assert anonymous.json()['error']['code'] == 'AUTH_REQUIRED'
+    assert anonymous.headers['X-Error-Code'] == 'AUTH_REQUIRED'
+    assert anonymous.headers['Cache-Control'] == 'no-store'
+
+    browser.get('/')
+    forbidden = browser.put('/api/libraries/sql',
+                            headers={'Origin': 'https://evil.test'},
+                            json={'title': 'SQL'})
+    missing = browser.get('/api/study-plans/missing')
+    invalid = browser.get('/api/study-plans/bad.id')
+    cases = [
+        (forbidden, 403, 'FORBIDDEN'),
+        (missing, 404, 'NOT_FOUND'),
+        (invalid, 422, 'INVALID_REQUEST'),
+    ]
+    for response, status, code in cases:
+        assert response.status_code == status
+        assert response.json()['error']['code'] == code
+        assert response.headers['X-Error-Code'] == code
+        assert response.headers['Cache-Control'] == 'no-store'
+        assert response.json()['error']['requestId'] == response.headers['X-Request-ID']
+        assert len(response.headers['X-Request-ID']) == 24
+        assert isinstance(response.json()['detail'], str)
+
+    assert len({response.headers['X-Request-ID'] for response, _, _ in cases}) == 3
+
+    secret = 'do-not-reflect-private-input-82732'
+    violation = browser.post(
+        '/api/study-plans/sql/execute',
+        headers={'Origin': ORIGIN, 'X-Request-ID': secret},
+        json={'revision': secret, 'sourceFileId': 'a' * 32,
+              'clientRequestId': 'b' * 32, 'questionCount': 99,
+              'privateData': secret},
+    )
+    assert violation.status_code == 422
+    assert violation.json()['error']['code'] == 'INVALID_REQUEST'
+    assert violation.headers['X-Error-Code'] == 'INVALID_REQUEST'
+    assert violation.json()['error']['requestId'] == violation.headers['X-Request-ID']
+    assert secret not in violation.text
+    assert secret not in violation.headers['X-Request-ID']
+    assert 'input' not in violation.json()
+    assert '请求参数格式无效' in violation.json()['detail']
+
+
+def test_phase37_upload_limit_errors_have_same_diagnostic_contract(tmp_path):
+    """Early ASGI body rejections must not bypass the API error contract."""
+    app = app_at(tmp_path)
+    browser = client(app)
+    browser.get('/')
+    response = browser.put('/api/libraries/sql',
+                           headers={'Origin': ORIGIN, 'Content-Length': '30000000'},
+                           json={'title': 'SQL'})
+    assert response.status_code == 413
+    assert response.json()['error']['code'] == 'PAYLOAD_TOO_LARGE'
+    assert response.headers['X-Error-Code'] == 'PAYLOAD_TOO_LARGE'
+    assert response.headers['X-Request-ID'] == response.json()['error']['requestId']
+    assert response.headers['Cache-Control'] == 'no-store'
+
+
+def test_phase37_database_conflict_and_model_unavailable_are_normalized(tmp_path, monkeypatch):
+    """API failures are machine readable without weakening model preflight."""
+    app = app_at(tmp_path)
+    browser = client(app)
+    browser.get('/')
+    headers = {'Origin': ORIGIN}
+    assert browser.put('/api/libraries/sql', headers=headers,
+                       json={'title': 'SQL'}).status_code == 200
+    with browser_store(tmp_path, browser).db() as db:
+        db.execute("""INSERT INTO web_point_progress
+            (library_id, point_key, label, mastery, attempts, correct)
+            VALUES ('sql', 'having', 'HAVING', 0.1, 1, 2)""")
+    conflict = browser.get('/api/study-plans/sql')
+    assert conflict.status_code == 409
+    assert conflict.json()['error']['code'] == 'CONFLICT'
+    assert conflict.headers['X-Request-ID'] == conflict.json()['error']['requestId']
+
+    monkeypatch.setattr(web_api, 'generation_readiness',
+                        lambda: {'generationReady': False, 'generationIssue': '模型暂时不可用'})
+    response = browser.post(
+        '/api/generation-tasks',
+        headers=headers,
+        files={'files': ('sql.txt', b'WHERE filters rows before grouping.', 'text/plain')},
+        data={'libraryId': 'sql', 'libraryName': 'SQL',
+              'questionCount': '1', 'requirements': 'WHERE'},
+    )
+    assert response.status_code == 503
+    assert response.json()['error']['code'] == 'SERVICE_UNAVAILABLE'
+    assert response.headers['X-Error-Code'] == 'SERVICE_UNAVAILABLE'
+    assert response.headers['X-Request-ID'] == response.json()['error']['requestId']
+    assert response.headers['Cache-Control'] == 'no-store'
