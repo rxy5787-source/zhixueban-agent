@@ -1496,3 +1496,69 @@ def test_phase37_database_conflict_and_model_unavailable_are_normalized(tmp_path
     assert response.headers['X-Error-Code'] == 'SERVICE_UNAVAILABLE'
     assert response.headers['X-Request-ID'] == response.json()['error']['requestId']
     assert response.headers['Cache-Control'] == 'no-store'
+
+
+def test_phase38_unhandled_application_error_is_private_and_traceable(tmp_path, monkeypatch, caplog):
+    """A runtime failure must expose neither source data nor stack details."""
+    import logging
+    import re
+    from backend import web_trial
+
+    app = app_at(tmp_path)
+    browser = client(app)
+    assert browser.get('/').status_code == 200
+    secret = 'PRIVATE-UPLOADED-LESSON-AND-TOKEN'
+    def broken_planner(db, library_id):
+        raise RuntimeError(secret)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(web_trial, 'study_proposal', broken_planner)
+        with caplog.at_level(logging.ERROR, logger=web_trial.LOGGER.name):
+            failed = browser.get('/api/study-plans/sql')
+    assert failed.status_code == 500
+    body = failed.json()
+    assert body['detail'] == '服务暂时无法处理请求，请稍后重试。'
+    assert body['error']['code'] == 'SERVER_ERROR'
+    assert body['error']['requestId'] == failed.headers['X-Request-ID']
+    assert failed.headers['X-Error-Code'] == 'SERVER_ERROR'
+    assert failed.headers['Cache-Control'] == 'no-store'
+    assert re.fullmatch(r'[0-9a-f]{24}', body['error']['requestId'])
+    assert 'nosniff' == failed.headers['X-Content-Type-Options']
+    assert secret not in failed.text
+    assert secret not in caplog.text
+    assert 'Traceback' not in caplog.text
+    assert f"request_id={body['error']['requestId']}" in caplog.text
+    assert 'failure_type=RuntimeError' in caplog.text
+
+    # A failing request must not poison the following request.
+    healthy = browser.get('/api/libraries')
+    assert healthy.status_code == 200
+    assert healthy.headers['X-Request-ID'] != failed.headers['X-Request-ID']
+
+
+def test_phase38_unexpected_integrity_error_logs_no_sql_or_private_values(tmp_path, monkeypatch, caplog):
+    """Unknown database constraints must not log a raw exception message."""
+    import logging
+    import sqlite3
+    from backend import web_trial
+
+    app = app_at(tmp_path)
+    browser = client(app)
+    browser.get('/')
+    secret = 'SQL-CONSTRAINT-SECRET-WITH-USER-CONTENT'
+    def broken_planner(db, library_id):
+        raise sqlite3.IntegrityError(secret)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(web_trial, 'study_proposal', broken_planner)
+        with caplog.at_level(logging.ERROR, logger=web_trial.LOGGER.name):
+            failed = browser.get('/api/study-plans/sql')
+    assert failed.status_code == 500
+    assert failed.json()['detail'] == '学习数据暂时无法保存，请稍后重试。'
+    assert failed.json()['error']['code'] == 'SERVER_ERROR'
+    assert failed.json()['error']['requestId'] == failed.headers['X-Request-ID']
+    assert failed.headers['Cache-Control'] == 'no-store'
+    assert secret not in failed.text
+    assert secret not in caplog.text
+    assert 'Traceback' not in caplog.text
+    assert f"request_id={failed.headers['X-Request-ID']}" in caplog.text
