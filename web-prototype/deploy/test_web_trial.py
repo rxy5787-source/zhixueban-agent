@@ -1043,3 +1043,107 @@ def test_concurrent_retries_and_repeated_archiving_are_idempotent(tmp_path):
     with store.db() as db:
         assert db.execute('SELECT question_id FROM web_questions WHERE library_id=? ORDER BY question_id',
                           ('recovery',)).fetchall() == saved
+
+
+def test_phase34_timing_is_scoped_and_leaks_no_stage_text(tmp_path):
+    from backend.job_timing import phase_from_stage
+    app = app_at(tmp_path)
+    first, second = client(app), client(app)
+    first.get('/')
+    second.get('/')
+    response = create_exam(first, 'sql')
+    assert response.status_code == 201, response.text
+    task = response.json()['taskId']
+    endpoint = f'/api/generation-tasks/{task}/timing'
+    assert client(app).get(endpoint).status_code == 401
+    assert second.get(endpoint).status_code == 404
+    assert first.get('/api/generation-tasks/missing/timing').status_code == 404
+    assert first.get(endpoint, headers={'Origin': 'https://evil.test'}).status_code == 403
+
+    secret = 'PRIVATE-CREDENTIAL-NEVER-DISCLOSE'
+    store = browser_store(tmp_path, first)
+    store.update(task, 'running', '解析 '+secret+'.docx')
+    store.update(task, 'running', 'AI生成题目 '+secret)
+    store.update(task, 'failed', '失败 '+secret, error=secret)
+    before = store.get(task)
+    info = first.get(endpoint)
+    assert info.status_code == 200, info.text
+    body = info.json()
+    assert body['taskId'] == task
+    assert body['errorCategory'] == 'task_failed'
+    assert body['queueWaitMs'] is None
+    assert body['timingBasis'] == 'completed_checkpoint_intervals'
+    assert body['terminalWallTimeMs'] is not None
+    assert secret not in info.text
+    assert '.docx' not in info.text
+    assert phase_from_stage(secret) == 'other'
+    assert store.get(task) == before
+
+
+def test_phase34_claim_and_archive_checkpoint_are_atomic_and_measurable(tmp_path, monkeypatch):
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
+    app = app_at(tmp_path)
+    browser = client(app)
+    task = submit_recovery_task(browser, library='sql')
+    store = browser_store(tmp_path, browser)
+    claimed = store.claim()
+    assert claimed['id'] == task
+    store.update(task, 'running', 'AI生成题目')
+    store.update(task, 'running', '自动质量初筛')
+    store.update(task, 'succeeded', '已结束', {'content': {'libraries': []}})
+    with store.db() as db:
+        assert db.execute(
+            "SELECT COUNT(*) FROM job_events WHERE job_id=? AND stage='准备解析'",
+            (task,),
+        ).fetchone()[0] == 1
+        assert db.execute(
+            "SELECT COUNT(*) FROM job_archive_metrics WHERE job_id=?",
+            (task,),
+        ).fetchone()[0] == 1
+        before = db.execute('SELECT COUNT(*) FROM job_events WHERE job_id=?', (task,)).fetchone()[0]
+    response = browser.get(f'/api/generation-tasks/{task}/timing')
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['queueWaitMs'] is not None
+    assert body['archiveCallbackMs'] is not None
+    assert body['archiveCallbackMs'] >= 0
+    assert 'generation' in body['phaseElapsedMs']
+    assert 'quality' in body['phaseElapsedMs']
+    with store.db() as db:
+        after = db.execute('SELECT COUNT(*) FROM job_events WHERE job_id=?', (task,)).fetchone()[0]
+    assert before == after
+
+
+def test_phase34_timing_analyzer_handles_clock_regression_without_private_data():
+    from backend.job_timing import timing_report
+    task = 'a'*32
+    job = {'id': task, 'created': 100.0, 'updated': 112.0, 'state': 'interrupted'}
+    empty = timing_report(job, [])
+    assert empty['phaseElapsedMs'] == {}
+    assert empty['queueWaitMs'] is None
+    assert empty['errorCategory'] == 'task_interrupted'
+    events = [
+        {'state': 'running', 'stage': '准备解析', 'created': 106.0},
+        {'state': 'running', 'stage': 'AI生成题目 CREDENTIAL-SECRET', 'created': 104.0},
+        {'state': 'interrupted', 'stage': '中断 CREDENTIAL-SECRET', 'created': 112.0},
+    ]
+    report = timing_report(job, events)
+    assert report['queueWaitMs'] == 6000
+    assert report['phaseElapsedMs']['preparation'] == 0
+    assert report['phaseElapsedMs']['generation'] == 6000
+    assert 'CREDENTIAL-SECRET' not in str(report)
+
+
+def test_phase34_recovery_advice_and_timing_diagnostics_remain_independent(tmp_path):
+    app = app_at(tmp_path)
+    browser = client(app)
+    task = submit_recovery_task(browser, library='sql')
+    store = browser_store(tmp_path, browser)
+    store.update(task, 'failed', '出题失败')
+    timing_before = browser.get(f'/api/generation-tasks/{task}/timing')
+    advice_before = browser.get(f'/api/generation-tasks/{task}/recovery-advice')
+    assert timing_before.status_code == advice_before.status_code == 200
+    for _ in range(2):
+        assert browser.get(f'/api/generation-tasks/{task}/timing').json() == timing_before.json()
+        assert browser.get(f'/api/generation-tasks/{task}/recovery-advice').json() == advice_before.json()
+    assert 'recovery' not in timing_before.text.lower()
