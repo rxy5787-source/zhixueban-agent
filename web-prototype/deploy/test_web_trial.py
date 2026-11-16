@@ -76,11 +76,11 @@ def test_stage_timing_is_session_scoped_and_strips_private_text(tmp_path):
     assert first.get(url, headers={'Origin': 'https://evil.example'}).status_code == 403
 
 
-def test_stage_timing_claim_and_archive_callback_are_measured(tmp_path):
+def test_stage_timing_claim_and_archive_callback_are_measured(tmp_path, monkeypatch):
+    monkeypatch.setattr(web_api, 'generation_readiness', lambda: {'generationReady': True})
     app = app_at(tmp_path)
     browser = client(app)
-    browser.get('/')
-    task = create_exam(browser, 'sql').json()['taskId']
+    task = submit_recovery_task(browser, library='sql')
     store = browser_store(tmp_path, browser)
     claimed = store.claim()
     assert claimed['id'] == task
