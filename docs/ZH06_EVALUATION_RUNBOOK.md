@@ -46,7 +46,17 @@
 
     python python-ai/evaluation/zh06.py run --confirm-live --cases all --system-source "D:/path/to/original-computer-systems.docx" --output artifacts/zh06-eval/full-qwen3-1.7b
 
-每条逐一执行直至完成或超时；保存到 case-01.json 等文件。失败和超时如实保留，不计入人工正确率。脚本发现已有同编号结果时拒绝覆盖；缺失案例可以使用 --cases 5,6 精确补跑。提交后断网应先查看服务器任务是否已经创建，避免人为重复运行。原始输出可能含课堂资料和模型内容，已对默认 artifacts/zh06-eval/ 路径添加 .gitignore。
+每条案例在提交之前先把随机 `clientRequestId` 和输入摘要写到 `case-XX.json`。本地浏览器会话保存在同一输出目录的隐藏文件 `.local-trial.cookies`，该文件**包含敏感登录凭据**：不要共享、上传、加入Git或复制到公开目录。Linux/macOS将限制权限为仅当前用户；Windows应将此目录保存在自己的用户文件夹中。
+
+每次只执行一个任务；成功收到任务ID后会保存回执。发生断线、超时、工具意外终止时，使用**相同输出目录、相同资料、相同案例**并明确开启恢复：
+
+    python python-ai/evaluation/zh06.py run --confirm-live --resume --cases 13,20 --output artifacts/zh06-eval/sql-smoke
+
+恢复流程先读取原会话并校验其有效性，再使用 `GET /api/generation-submissions/{clientRequestId}` 查询已接收的任务。如果任务已存在，只查询进度；如果服务端明确没有收到上传，才用同一提交标识重新提交。已完成案例不覆盖，资料SHA256或请求内容变化时拒绝混合结果。
+
+评测开始前，CLI访问会话保护的 `/api/evaluation-preflight`，确认服务端明确处于**仅本机运行**的 `TRIAL_LOCAL_PREVIEW=1` 模式，并且Qwen就绪；否则不开始提交。本功能不会对公开试用服务开放。
+
+失败和超时如实保留，不计入人工正确率。缺失案例可用 `--cases 5,6` 补跑；如果当前输出目录已经有会话或运行记录，必须使用 `--resume`，不能隐式换浏览器空间。原始输出包含学习资料或模型内容，默认 `artifacts/zh06-eval/` 已在 `.gitignore` 中。
 
 ## 第四阶段：人工核查并生成报告
 
