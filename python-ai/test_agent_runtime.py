@@ -266,3 +266,34 @@ def test_recovery_replay_consistency_and_tampering():
     forged = deepcopy(one["decisionTrace"])
     forged["selectedAction"] = "run_shell"
     assert replay_recovery_trace(forged)["reason"] == "policy_choice_changed"
+
+
+def test_replay_rejects_impossible_runtime_state_transitions():
+    from copy import deepcopy
+    from backend.agent_decision_audit import replay_runtime_trace
+
+    trace = AgentRuntime(registry=fake_registry()).run(TEXT, "SQL题", count=1)["decisionTrace"]
+    assert replay_runtime_trace(trace)["matched"] is True
+
+    forged = deepcopy(trace)
+    forged["decisions"][1]["features"]["attempts"] = 1
+    assert replay_runtime_trace(forged) == {
+        "matched": False, "divergentStep": 2,
+        "reason": "inconsistent_state_transition",
+    }
+
+    forged = deepcopy(trace)
+    forged["decisions"][3]["features"]["attempts"] = 0
+    assert replay_runtime_trace(forged)["reason"] == "inconsistent_state_transition"
+
+    forged = deepcopy(trace)
+    forged["decisions"][1]["features"]["requestedCount"] = 2
+    assert replay_runtime_trace(forged)["reason"] == "inconsistent_state_transition"
+
+    forged = deepcopy(trace)
+    forged["decisions"][0]["features"]["acceptedCount"] = 1
+    assert replay_runtime_trace(forged)["reason"] == "invalid_initial_state"
+
+    supplied = AgentRuntime(registry=fake_registry()).run(
+        TEXT, "SQL题", count=1, points=[{"name": "SQL"}])
+    assert replay_runtime_trace(supplied["decisionTrace"])["matched"] is True
