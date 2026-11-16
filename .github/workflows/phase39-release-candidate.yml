@@ -82,12 +82,13 @@ jobs:
         run: |
           $manifest = Join-Path $env:RUNNER_TEMP 'zhixueban-release-manifest.json'
           $manifestData = Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json
-          @(
+          $report = @(
             '## Offline release candidate gate'
             ''
-            "- Head: `$env:GITHUB_SHA`"
-            "- ZIP SHA-256: `$($manifestData.sha256)`"
-            "- ZIP entries: $($manifestData.fileCount)"
-            "- Python sources parsed: $($manifestData.pythonFilesParsed)"
-            '- Status: offline checks only; no Docker container boot, Qwen or Android device validation'
-          ) | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+            ('- Head: ' + $env:GITHUB_SHA)
+            ('- ZIP SHA-256: ' + $manifestData.sha256)
+            ('- ZIP entries: ' + $manifestData.fileCount)
+            ('- Python sources parsed: ' + $manifestData.pythonFilesParsed)
+            '- Status: offline checks only; Docker/model/device validation not performed'
+          )
+          $report | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
