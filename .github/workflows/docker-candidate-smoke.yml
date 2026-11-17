@@ -5,11 +5,14 @@ on:
     branches:
       - integration/phase43-docker-smoke-20261117
       - integration/phase44-container-api-smoke-20261117
+      - integration/phase45-restart-recovery-20261117
     paths:
       - 'web-prototype/**'
       - 'python-ai/**'
       - 'scripts/verify_trial_release.py'
       - 'scripts/container_http_smoke.py'
+      - 'scripts/container_restart_smoke.py'
+      - 'scripts/seed_interrupted_job.py'
       - '.github/workflows/docker-candidate-smoke.yml'
   workflow_dispatch:
 
@@ -49,7 +52,12 @@ jobs:
           set -euo pipefail
           secret="$(python -c 'import secrets; print(secrets.token_hex(32))')"
           echo "::add-mask::$secret"
+          printf '%s' "$secret" > "$RUNNER_TEMP/phase45-secret"
+          chmod 600 "$RUNNER_TEMP/phase45-secret"
+          mkdir -p "$RUNNER_TEMP/phase45-data"
+          sudo chown 10001:10001 "$RUNNER_TEMP/phase45-data"
           docker run -d --name zhixueban-smoke --init \
+            --mount "type=bind,source=$RUNNER_TEMP/phase45-data,target=/data" \
             --cap-drop=ALL --security-opt=no-new-privileges \
             -p 127.0.0.1:18080:8080 \
             -e TRIAL_PUBLIC_ORIGIN=http://127.0.0.1:18080 \
@@ -81,6 +89,50 @@ jobs:
         run: |
           set -euo pipefail
           python scripts/container_http_smoke.py http://127.0.0.1:18080
+      - name: Seed persistent libraries and independent browser sessions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/container_restart_smoke.py seed http://127.0.0.1:18080 "$RUNNER_TEMP/phase45-state"
+      - name: Replace container and simulate interrupted model task in stopped volume
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker stop -t 5 zhixueban-smoke
+          docker rm zhixueban-smoke
+          sudo python scripts/seed_interrupted_job.py "$RUNNER_TEMP/phase45-data/trial/spaces" "$RUNNER_TEMP/phase45-state/state.json"
+          sudo chown -R 10001:10001 "$RUNNER_TEMP/phase45-data"
+          secret="$(cat "$RUNNER_TEMP/phase45-secret")"
+          echo "::add-mask::$secret"
+          docker run -d --name zhixueban-smoke --init \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            --mount "type=bind,source=$RUNNER_TEMP/phase45-data,target=/data" \
+            -p 127.0.0.1:18080:8080 \
+            -e TRIAL_PUBLIC_ORIGIN=http://127.0.0.1:18080 \
+            -e TRIAL_SECRET="$secret" \
+            -e TRIAL_MAX_SPACES=4 \
+            -e TRIAL_DATA_DIR=/data/trial \
+            -e TRIAL_FRONTEND_DIR=/app/public \
+            -e AI_WEB_DATA_DIR=/data/local-adapter \
+            zhixueban-smoke:ci
+          for attempt in $(seq 1 50); do
+            if curl --fail --silent --show-error --max-time 3 http://127.0.0.1:18080/healthz -o /tmp/zhixueban-restarted.json 2>/dev/null; then
+              python -c 'import json; assert json.load(open("/tmp/zhixueban-restarted.json")) == {"ok": True}'
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' zhixueban-smoke)" != "true" ]; then
+              echo 'Replacement container unexpectedly exited' >&2
+              exit 1
+            fi
+            sleep 3
+          done
+          echo 'Replacement container did not become healthy' >&2
+          exit 1
+      - name: Verify retained sessions and restart-safe retry over real HTTP
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/container_restart_smoke.py verify http://127.0.0.1:18080 "$RUNNER_TEMP/phase45-state"
       - name: Cleanup and diagnostic logs
         if: always()
         shell: bash
@@ -89,6 +141,8 @@ jobs:
             docker logs --tail 80 zhixueban-smoke || true
             docker rm -f zhixueban-smoke || true
           fi
+          rm -rf "$RUNNER_TEMP/phase45-state" "$RUNNER_TEMP/phase45-secret"
+          sudo rm -rf "$RUNNER_TEMP/phase45-data"
       - name: Document test scope
         if: success()
         shell: bash
@@ -97,6 +151,8 @@ jobs:
             echo '## Real Linux Docker smoke'
             echo '- Actual Docker image build: passed'
             echo '- Actual container boot and HTTP /healthz + /: passed'
+            echo '- Container replaced using persistent bind-mounted data; signed sessions and library isolation verified'
+            echo '- Synthetic interrupted job and idempotent retry verified through real HTTP'
             echo '- No Ollama model was downloaded or queried'
             echo '- No end-to-end question generation, Android test, Compose/Caddy HTTPS, or production security audit'
           } >> "$GITHUB_STEP_SUMMARY"
