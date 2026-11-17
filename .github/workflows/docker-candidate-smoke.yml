@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - integration/phase43-docker-smoke-20261117
+      - integration/phase44-container-api-smoke-20261117
     paths:
       - 'web-prototype/**'
       - 'python-ai/**'
