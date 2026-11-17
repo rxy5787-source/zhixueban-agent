@@ -27,6 +27,19 @@ def client(app):
     return TestClient(app, base_url=ORIGIN)
 
 
+def test_study_chat_is_available_only_in_a_trial_session(tmp_path):
+    browser = client(app_at(tmp_path))
+    assert browser.get('/api/study-capabilities').status_code == 401
+    assert browser.get('/').status_code == 200
+    assert browser.get('/api/study-capabilities').json() == {'studyChat': True}
+    response = browser.post('/api/study-turns', headers={'Origin': ORIGIN}, json={
+        'parentId': 'a' * 32, 'requestId': '2ab9094f-d2b5-46b8-85c0-e6565ee0ad0c',
+        'requirement': '继续生成练习题', 'kind': 'single_choice',
+    })
+    assert response.status_code == 404
+    assert response.json()['detail'] == '生成任务不存在'
+
+
 def create_exam(browser, library):
     return browser.post('/api/exam-practice-tasks', headers={'Origin': ORIGIN}, json={
         'libraryId': library, 'libraryName': library, 'questionCount': 1, 'topic': 'complement',

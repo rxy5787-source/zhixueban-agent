@@ -40,7 +40,7 @@ export function readGenerationRequest(requirement: string, hasFiles: boolean, de
   }
   const generic = /(?:软考|软件设计师)(?:考试)?(?:的)?\s*(?:综合|混合)?\s*计算(?:题|练习|专项)/.test(text)
   if (!topics.length && !mixed && !generic) {
-    return { error: '请添加资料，或输入计算题要求，例如“生成 3 道软考补码题”。' }
+    return { error: '请添加与学习需求相关的资料，例如课件、笔记或图片，再发送。' }
   }
   if (/填空|多选|判断题|简答题|问答题|论述题/.test(text)) {
     return { error: '计算题目前按单选题生成。可以改写为“生成 3 道软考补码单选题”。' }
