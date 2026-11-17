@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 import sys
 
-RETAINED = frozenset({"stable-quality-gate.yml", "web-ci.yml"})
+RETAINED = frozenset({"stable-quality-gate.yml", "web-ci.yml", "docker-candidate-smoke.yml"})
 REQUIRED_STEPS = (
     "Check that the candidate contains the main baseline",
     "Build Web frontend",
@@ -37,6 +37,18 @@ def audit(root: Path) -> dict:
             "Unexpected CI workflow set; "
             f"missing={sorted(RETAINED - actual)}, extra={sorted(actual - RETAINED)}"
         )
+    docker_smoke = (workflows / "docker-candidate-smoke.yml").read_text(encoding="utf-8")
+    for required in (
+        "permissions:\\n  contents: read",
+        "Build actual Linux application image",
+        "Start container and probe HTTP readiness",
+        "docker run -d --name zhixueban-smoke",
+        "http://127.0.0.1:18080/healthz",
+    ):
+        if required.replace("\\n", "\n") not in docker_smoke:
+            raise ValueError("Docker smoke workflow is incomplete: " + required)
+    if "ollama pull" in docker_smoke or "docker compose up" in docker_smoke:
+        raise ValueError("Docker smoke should not pull models or start full Compose")
     stable = (workflows / "stable-quality-gate.yml").read_text(encoding="utf-8")
     legacy = (workflows / "web-ci.yml").read_text(encoding="utf-8")
     if stable.count("    name: Stable quality / Web + Agent + ZIP") != 1:
@@ -66,7 +78,7 @@ def audit(root: Path) -> dict:
         "limitations": [
             "Only static CI structure was checked; required checks are not enabled",
             "The main branch was not changed and no pull requests were merged",
-            "Real Docker/Qwen inference/Android validation remains outstanding",
+            "Docker application-container smoke is checked separately; full Compose/HTTPS, Qwen and Android validation remain outstanding",
         ],
     }
 
