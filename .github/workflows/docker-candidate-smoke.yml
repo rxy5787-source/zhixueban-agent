@@ -1,0 +1,95 @@
+name: Docker candidate smoke
+
+on:
+  push:
+    branches:
+      - integration/phase43-docker-smoke-20261117
+    paths:
+      - 'web-prototype/**'
+      - 'python-ai/**'
+      - 'scripts/verify_trial_release.py'
+      - '.github/workflows/docker-candidate-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker-smoke:
+    name: Docker build and live HTTP health
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Package deployable trial sources
+        shell: pwsh
+        run: |
+          ./web-prototype/deploy/prepare.ps1 -PythonProject (Resolve-Path python-ai).Path -OutputZip (Join-Path $env:RUNNER_TEMP 'candidate.zip')
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging failed' }
+          Expand-Archive -LiteralPath (Join-Path $env:RUNNER_TEMP 'candidate.zip') -DestinationPath (Join-Path $env:RUNNER_TEMP 'candidate')
+      - name: Build actual Linux application image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull -t zhixueban-smoke:ci "$RUNNER_TEMP/candidate"
+      - name: Start container and probe HTTP readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          secret="$(python -c 'import secrets; print(secrets.token_hex(32))')"
+          echo "::add-mask::$secret"
+          docker run -d --name zhixueban-smoke --init \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            -p 127.0.0.1:18080:8080 \
+            -e TRIAL_PUBLIC_ORIGIN=http://127.0.0.1:18080 \
+            -e TRIAL_SECRET="$secret" \
+            -e TRIAL_MAX_SPACES=2 \
+            -e TRIAL_DATA_DIR=/data/trial \
+            -e TRIAL_FRONTEND_DIR=/app/public \
+            -e AI_WEB_DATA_DIR=/data/local-adapter \
+            zhixueban-smoke:ci
+          for attempt in $(seq 1 50); do
+            if curl --fail --silent --show-error --max-time 3 http://127.0.0.1:18080/healthz -o /tmp/zhixueban-health.json 2>/dev/null; then
+              python -c 'import json; assert json.load(open("/tmp/zhixueban-health.json")) == {"ok": True}'
+              curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18080/ -o /tmp/zhixueban-home.html
+              test -s /tmp/zhixueban-home.html
+              echo "Live container healthz and home page responded"
+              exit 0
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' zhixueban-smoke)" != "true" ]; then
+              docker logs --tail 80 zhixueban-smoke
+              exit 1
+            fi
+            sleep 3
+          done
+          docker logs --tail 80 zhixueban-smoke
+          echo 'Timed out waiting for live HTTP readiness' >&2
+          exit 1
+      - name: Cleanup and diagnostic logs
+        if: always()
+        shell: bash
+        run: |
+          if docker ps -a --format '{{.Names}}' | grep -Fxq zhixueban-smoke; then
+            docker logs --tail 80 zhixueban-smoke || true
+            docker rm -f zhixueban-smoke || true
+          fi
+      - name: Document test scope
+        if: success()
+        shell: bash
+        run: |
+          {
+            echo '## Real Linux Docker smoke'
+            echo '- Actual Docker image build: passed'
+            echo '- Actual container boot and HTTP /healthz + /: passed'
+            echo '- No Ollama model was downloaded or queried'
+            echo '- No end-to-end question generation, Android test, Compose/Caddy HTTPS, or production security audit'
+          } >> "$GITHUB_STEP_SUMMARY"
