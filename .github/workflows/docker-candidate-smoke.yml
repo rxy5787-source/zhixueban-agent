@@ -62,7 +62,7 @@ jobs:
             -p 127.0.0.1:18080:8080 \
             -e TRIAL_PUBLIC_ORIGIN=http://127.0.0.1:18080 \
             -e TRIAL_SECRET="$secret" \
-            -e TRIAL_MAX_SPACES=4 \
+            -e TRIAL_MAX_SPACES=8 \
             -e TRIAL_DATA_DIR=/data/trial \
             -e TRIAL_FRONTEND_DIR=/app/public \
             -e AI_WEB_DATA_DIR=/data/local-adapter \
@@ -110,7 +110,7 @@ jobs:
             -p 127.0.0.1:18080:8080 \
             -e TRIAL_PUBLIC_ORIGIN=http://127.0.0.1:18080 \
             -e TRIAL_SECRET="$secret" \
-            -e TRIAL_MAX_SPACES=4 \
+            -e TRIAL_MAX_SPACES=8 \
             -e TRIAL_DATA_DIR=/data/trial \
             -e TRIAL_FRONTEND_DIR=/app/public \
             -e AI_WEB_DATA_DIR=/data/local-adapter \
