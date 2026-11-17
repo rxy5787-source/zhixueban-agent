@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - integration/phase43-docker-smoke-20261117
+      - integration/phase44-container-api-smoke-20261117
     paths:
       - 'web-prototype/**'
       - 'python-ai/**'
       - 'scripts/verify_trial_release.py'
+      - 'scripts/container_http_smoke.py'
       - '.github/workflows/docker-candidate-smoke.yml'
   workflow_dispatch:
 
@@ -52,7 +54,7 @@ jobs:
             -p 127.0.0.1:18080:8080 \
             -e TRIAL_PUBLIC_ORIGIN=http://127.0.0.1:18080 \
             -e TRIAL_SECRET="$secret" \
-            -e TRIAL_MAX_SPACES=2 \
+            -e TRIAL_MAX_SPACES=4 \
             -e TRIAL_DATA_DIR=/data/trial \
             -e TRIAL_FRONTEND_DIR=/app/public \
             -e AI_WEB_DATA_DIR=/data/local-adapter \
@@ -74,6 +76,11 @@ jobs:
           docker logs --tail 80 zhixueban-smoke
           echo 'Timed out waiting for live HTTP readiness' >&2
           exit 1
+      - name: Test real HTTP session and model-free business APIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/container_http_smoke.py http://127.0.0.1:18080
       - name: Cleanup and diagnostic logs
         if: always()
         shell: bash
