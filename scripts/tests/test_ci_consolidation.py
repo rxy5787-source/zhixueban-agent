@@ -23,6 +23,19 @@ permissions:
 """
 STABLE += "".join(f"      - name: {name}\n" for name in mod.REQUIRED_STEPS)
 LEGACY = "name: Web CI\non:\n  pull_request:\n    branches: [main]\n"
+DOCKER_SMOKE = """name: Docker candidate smoke
+permissions:
+  contents: read
+jobs:
+  docker-smoke:
+    steps:
+      - name: Build actual Linux application image
+      - name: Start container and probe HTTP readiness
+        run: |
+          docker run -d --name zhixueban-smoke
+          curl http://127.0.0.1:18080/healthz
+"""
+
 
 
 def make_root(tmp_path):
@@ -30,6 +43,7 @@ def make_root(tmp_path):
     wf.mkdir(parents=True)
     (wf / "stable-quality-gate.yml").write_text(STABLE, encoding="utf-8")
     (wf / "web-ci.yml").write_text(LEGACY, encoding="utf-8")
+    (wf / "docker-candidate-smoke.yml").write_text(DOCKER_SMOKE, encoding="utf-8")
     return tmp_path, wf
 
 
@@ -37,7 +51,7 @@ def test_expected_minimal_ci_set_is_accepted(tmp_path):
     root, _ = make_root(tmp_path)
     report = mod.audit(root)
     assert report["mainCiPreserved"] is True
-    assert report["retainedWorkflows"] == ["stable-quality-gate.yml", "web-ci.yml"]
+    assert report["retainedWorkflows"] == ["docker-candidate-smoke.yml", "stable-quality-gate.yml", "web-ci.yml"]
     assert report["removedStageOnlyWorkflows"] == 8
 
 
@@ -80,4 +94,29 @@ def test_rejects_removed_main_branch_trigger(tmp_path):
     path.write_text(LEGACY.replace("    branches: [main]", "    branches: [release]"),
                     encoding="utf-8")
     with pytest.raises(ValueError, match="main branch"):
+        mod.audit(root)
+
+
+def test_rejects_missing_docker_container_probe(tmp_path):
+    root, wf = make_root(tmp_path)
+    path = wf / "docker-candidate-smoke.yml"
+    path.write_text(DOCKER_SMOKE.replace(
+        "http://127.0.0.1:18080/healthz", "http://127.0.0.1:18080/"
+    ), encoding="utf-8")
+    with pytest.raises(ValueError, match="Docker smoke workflow is incomplete"):
+        mod.audit(root)
+
+
+def test_rejects_model_download_in_docker_smoke(tmp_path):
+    root, wf = make_root(tmp_path)
+    with (wf / "docker-candidate-smoke.yml").open("a", encoding="utf-8") as stream:
+        stream.write("ollama pull qwen3:1.7b\\n")
+    with pytest.raises(ValueError, match="should not pull models"):
+        mod.audit(root)
+
+
+def test_rejects_removed_docker_smoke(tmp_path):
+    root, wf = make_root(tmp_path)
+    (wf / "docker-candidate-smoke.yml").unlink()
+    with pytest.raises(ValueError, match="Unexpected CI workflow set"):
         mod.audit(root)
