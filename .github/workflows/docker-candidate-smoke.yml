@@ -8,6 +8,7 @@ on:
       - 'web-prototype/**'
       - 'python-ai/**'
       - 'scripts/verify_trial_release.py'
+      - 'scripts/container_http_smoke.py'
       - '.github/workflows/docker-candidate-smoke.yml'
   workflow_dispatch:
 
@@ -74,6 +75,11 @@ jobs:
           docker logs --tail 80 zhixueban-smoke
           echo 'Timed out waiting for live HTTP readiness' >&2
           exit 1
+      - name: Test real HTTP session and model-free business APIs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/container_http_smoke.py http://127.0.0.1:18080
       - name: Cleanup and diagnostic logs
         if: always()
         shell: bash
