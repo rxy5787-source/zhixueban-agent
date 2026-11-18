@@ -1,0 +1,92 @@
+name: Export Zhixueban graduation source ZIP
+
+on:
+  push:
+    branches:
+      - packaging/full-graduation-source-20261118
+    paths:
+      - '.github/workflows/export-graduation-source.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Checkout pinned PR48 source without working secrets
+        uses: actions/checkout@v4
+        with:
+          ref: 2ba698948644553676fe9bcaa31ac9326dca8c40
+          persist-credentials: false
+      - name: Create and verify source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime, hashlib, json, pathlib, re, subprocess, zipfile
+          SHA = '2ba698948644553676fe9bcaa31ac9326dca8c40'
+          dest = pathlib.Path('/tmp/zhixueban_graduation_full_source_2026-11-18.zip')
+          root = pathlib.Path.cwd()
+          prefix = 'zhixueban-graduation-project/'
+          banned = {'.git', '.gradle', '.idea', '.venv', 'venv', 'node_modules', 'dist', 'build', 'target', '__pycache__', '.pytest_cache', '.next', 'coverage', 'uploads', 'artifacts'}
+          blocked_suffix = {'.db', '.sqlite', '.sqlite3', '.pem', '.key', '.p12', '.pfx', '.apk', '.aab', '.keystore', '.jks', '.log', '.pyc'}
+          files = subprocess.check_output(['git', 'ls-tree', '-r', '-z', '--name-only', 'HEAD']).split(b'\x00')
+          manifest = []
+          excluded = []
+          with zipfile.ZipFile(dest, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+              for raw in files:
+                  if not raw: continue
+                  relative = raw.decode('utf-8')
+                  path = pathlib.PurePosixPath(relative)
+                  if path.is_absolute() or '..' in path.parts: raise RuntimeError('Invalid tracked path')
+                  if any(part.lower() in banned for part in path.parts):
+                      excluded.append(relative); continue
+                  lower = path.name.lower()
+                  if (lower == '.env' or (lower.startswith('.env.') and lower != '.env.example')
+                      or path.suffix.lower() in blocked_suffix
+                      or lower in {'id_rsa', 'id_ed25519', '.ds_store'}):
+                      excluded.append(relative); continue
+                  full = root / relative
+                  if not full.is_file() or full.is_symlink(): raise RuntimeError('Missing/symlink tracked file: ' + relative)
+                  data = full.read_bytes()
+                  if re.search(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----', data) or re.search(rb'ghp_[A-Za-z0-9]{36}', data) or re.search(rb'github_pat_[A-Za-z0-9_]{70,}', data):
+                      raise RuntimeError('Potential credential detected; packaging stopped: ' + relative)
+                  archive.writestr(prefix + relative, data)
+                  manifest.append({'path': relative, 'bytes': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
+              info = (
+                  '# 知学伴毕业设计完整源码包\n\n'
+                  '本ZIP包含Android端、Web端、Python后端/Agent、项目文档及GitHub Actions配置。\n'
+                  '源码来自已验证的GitHub草稿PR #48：\\n'
+                  'https://github.com/rxy5787-source/zhixueban-agent/pull/48\\n\n'
+                  '固定提交：' + SHA + '\n'
+                  '导出日期：2026-11-18\n\n'
+                  '已排除常见密钥、数据库、缓存、构建产物和机器本地环境文件。\n'
+                  '不包含Ollama/Qwen模型权重、系统依赖或Android SDK。\n'
+                  '注意：Android真机与本地Qwen完整业务闭环仍需本机测试。\n'
+                  '请先阅读项目根目录 README.md，并根据实际电脑环境配置。\n'
+              ).replace('\\n', '\n')
+              archive.writestr(prefix + '打包说明.md', info.encode('utf-8'))
+              archive.writestr(prefix + 'SOURCE_MANIFEST.json', json.dumps({'ref': SHA, 'included': manifest, 'excluded': excluded}, ensure_ascii=False, indent=2).encode('utf-8'))
+          with zipfile.ZipFile(dest) as check:
+              assert check.testzip() is None
+              names = check.namelist()
+              assert len(names) == len(manifest) + 2
+              assert any(n.endswith('gradlew.bat') for n in names)
+              assert any(n.startswith(prefix + 'app/') for n in names)
+              assert any(n.startswith(prefix + 'python-ai/') for n in names)
+              assert any(n.startswith(prefix + 'web-prototype/') for n in names)
+              assert not any(n.lower().endswith('/.env') for n in names)
+          print('SOURCE_PACKAGE_OK files=', len(manifest), 'excluded=', len(excluded), 'bytes=', dest.stat().st_size)
+          print('SHA256=', hashlib.sha256(dest.read_bytes()).hexdigest())
+          PY
+      - name: Upload complete project ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: zhixueban-graduation-project-source
+          path: /tmp/zhixueban_graduation_full_source_2026-11-18.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
