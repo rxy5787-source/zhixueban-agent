@@ -71,6 +71,11 @@ def looks_like_ocr_table(material):
 
 
 def standalone_issue(stem, evidence):
+    if isinstance(stem, str) and isinstance(evidence, str):
+        asks_origin = re.search(r'来自(?:何处|哪里|哪|什么)|来源(?:于|是|为)|来源是什么|where\b.{0,60}\bcome from', stem, re.I)
+        states_origin = re.search(r'来自|来源|源自|源于|由.{1,35}(?:提供|产生|分解)|\bfrom\b|\boriginat\w*\b', evidence, re.I)
+        if asks_origin and not states_origin:
+            return '题目询问来源，但引用原文没有说明来源关系'
     if isinstance(stem, str) and NUMBERED_QUESTION.match(unicodedata.normalize('NFKC', stem).strip()):
         return '题干只引用原资料的题号，缺少可独立作答的题意'
     if is_option_row(evidence):

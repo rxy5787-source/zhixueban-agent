@@ -1,6 +1,8 @@
 import concurrent.futures
 from pathlib import Path
 import time
+import json
+import pytest
 
 from fastapi.testclient import TestClient
 from requests import ReadTimeout
@@ -25,6 +27,72 @@ def app_at(tmp_path, maximum=32, *, start_worker=False, **options):
 
 def client(app):
     return TestClient(app, base_url=ORIGIN)
+
+
+def test_origin_question_requires_source_relation_in_evidence():
+    from backend.practice_quality import standalone_issue
+    assert standalone_issue('光合作用释放的氧气来自何处？', 'Oxygen is released as a byproduct.')
+    assert standalone_issue('光合作用释放的氧气来自何处？', '氧气来自水的分解。') == ''
+
+
+def test_mnemonic_rejects_ambiguous_or_mismatched_cues():
+    from backend import study_chat
+    from types import SimpleNamespace
+
+    for cue in ('乙记址', 'DR记址'):
+        anchor = {'point': '数据缓冲寄存器（DR）', 'cue': cue,
+                  'evidence': '数据缓冲寄存器（DR）：作为CPU和内存之间数据传送的中转站。'}
+        with pytest.raises(ValueError):
+            study_chat.mapped_mnemonic(SimpleNamespace(content=cue), [anchor])
+
+
+def test_reply_review_receives_previous_mnemonic_context(monkeypatch):
+    from backend import study_chat
+    from types import SimpleNamespace
+
+    prior = {'study': {'content': '甲存数，乙记址', 'anchors': [
+        {'point': '数据缓冲寄存器（DR）', 'cue': '乙记址',
+         'evidence': 'DR用于数据传送中转。'}]}}
+    store = SimpleNamespace(get=lambda ident, owner: {'result': prior})
+    captured = {}
+
+    def review(store, job, phase, messages, *args):
+        captured.update(json.loads(messages[0]['content'].split('\n', 1)[1]))
+        return SimpleNamespace(issue='ok')
+
+    monkeypatch.setattr(study_chat, 'model_json', review)
+    job = {'owner': 'web-local', 'request': {
+        'studyKind': 'reply', 'studyParent': 'previous', 'requirements': '这里面的甲乙是什么意思'}}
+    study_chat.review_learning_content(store, job, SimpleNamespace(content='上一轮乙的记址说法有误。'),
+                                      [{'point': 'DR', 'cue': '', 'meaning': '中转数据',
+                                        'evidence': 'DR用于数据传送中转。'}])
+    assert captured['previousAnswer']['content'] == '甲存数，乙记址'
+    assert captured['previousAnswer']['terms'][0]['point'] == '数据缓冲寄存器（DR）'
+
+
+def test_mnemonic_label_clarification_requires_original_evidence():
+    from backend.study_chat import clarify_mnemonic_labels
+    anchor = {'point': '数据缓冲寄存器（DR）', 'cue': '乙记址',
+              'evidence': 'DR用于数据传送中转。', 'ocr': False}
+    parent = {'result': {'study': {'kind': 'mnemonic', 'anchors': [anchor]}}}
+    assert clarify_mnemonic_labels('这里面的乙是什么意思', parent, []) is None
+    result = clarify_mnemonic_labels('这里面的乙是什么意思', parent, [{'text': anchor['evidence']}])
+    assert '乙对应数据缓冲寄存器（DR）' in result['content']
+    assert anchor['evidence'] in result['content']
+    assert result['method'] == 'verified_parent_labels'
+
+
+def test_study_chat_is_available_only_in_a_trial_session(tmp_path):
+    browser = client(app_at(tmp_path))
+    assert browser.get('/api/study-capabilities').status_code == 401
+    assert browser.get('/').status_code == 200
+    assert browser.get('/api/study-capabilities').json() == {'studyChat': True}
+    response = browser.post('/api/study-turns', headers={'Origin': ORIGIN}, json={
+        'parentId': 'a' * 32, 'requestId': '2ab9094f-d2b5-46b8-85c0-e6565ee0ad0c',
+        'requirement': '继续生成练习题', 'kind': 'single_choice',
+    })
+    assert response.status_code == 404
+    assert response.json()['detail'] == '生成任务不存在'
 
 
 def create_exam(browser, library):

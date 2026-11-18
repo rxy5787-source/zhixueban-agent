@@ -166,9 +166,10 @@ export function App() {
       return
     }
     setTargetId(libraryId)
-    setRequirement('根据资料优先生成本知识库的薄弱知识点练习')
+    setRequirement('根据资料优先生成本知识库薄弱知识点的四选一单选题')
     setFeedback('')
-    setNotice('请添加相关学习资料，再点击出题。')
+    const previous = studyEnabled && studyTurns.at(-1)?.libraryId === libraryId ? studyTurns.at(-1) : undefined
+    setNotice(previous ? '将沿用当前对话的资料。确认要求后发送。' : '请添加相关学习资料，再点击出题。')
   }
   function resetDemo() {
     setFiles([]); setRequirement(''); setFeedback(''); setNewName(''); setNameError('')

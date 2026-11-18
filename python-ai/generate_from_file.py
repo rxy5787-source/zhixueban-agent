@@ -290,6 +290,14 @@ def generate_questions(material, question_count=None, knowledge_points=None, tim
 要求：{requirements}
 编号资料：
 {source}'''
+        prompt += (
+            '\n作答前核对：先从引用原句找出问题的唯一答案，再把这个含义写进正确选项。'
+            '不要把原句或整段资料复制为题干，不要询问原文未说明的原因、过程或细节。'
+            '例如原文“某器件用于保存中间结果”，可问“需要暂存中间结果时使用哪类器件？”；'
+            '选项中必须有原文明示的那类器件。这个例子只示范命题方式。'
+            '若考某概念的作用，正确选项须保留原文的关键动作和对象，不能改写成另一种作用。'
+            '按用户使用的语言出题，专有术语可以保留原文写法。'
+        )
         if len(segments) >= requested * 3 and requested > 1:
             ranges = [f'{i * len(segments) // requested}–{(i + 1) * len(segments) // requested - 1}' for i in range(requested)]
             prompt += '\n若学习者未限定具体考点，优先从这些编号区间各选一个有完整依据的不同考点：' + '、'.join(ranges)

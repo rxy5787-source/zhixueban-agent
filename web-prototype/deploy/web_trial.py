@@ -24,7 +24,7 @@ from .job_store import Store
 from .web_api import WebStore, init_web_tables, request_store_override, routes
 from .worker import Runner
 from .trial_body_limit import RequestBodyLimit
-from . import resumable_uploads
+from . import resumable_uploads, study_chat
 
 
 LOGGER = logging.getLogger(__name__)
@@ -291,6 +291,7 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
     app.mount('/assets', StaticFiles(directory=frontend / 'assets'), name='assets')
     app.include_router(routes)
     app.include_router(resumable_uploads.router)
+    app.include_router(study_chat.router)
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=[url.hostname])
     return app
 

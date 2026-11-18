@@ -65,7 +65,7 @@ export function HomePage(props: Props) {
         <label htmlFor="generation-requirement">{props.studyEnabled ? '你想怎么学？' : '出题要求'}</label>
         <textarea ref={input} id="generation-requirement" value={props.requirement} maxLength={600} disabled={props.submitting}
           enterKeyHint={props.studyEnabled ? 'send' : 'enter'}
-          placeholder={context ? '继续追问，例如：把刚才的口诀改短一点' : props.studyEnabled ? '例如：把这份资料编成一句记忆口诀' : '例如：根据资料出 5 道选择题，或出 3 道软考补码题'}
+          placeholder={context ? '继续追问，例如：把刚才的口诀改短一点' : props.studyEnabled ? '例如：解释这份资料，或者生成练习题' : '例如：根据这份资料出 5 道选择题'}
           onKeyDown={event => {
             if (!props.studyEnabled || event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return
             event.preventDefault()
