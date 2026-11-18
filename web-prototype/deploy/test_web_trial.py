@@ -29,6 +29,12 @@ def client(app):
     return TestClient(app, base_url=ORIGIN)
 
 
+def test_origin_question_requires_source_relation_in_evidence():
+    from backend.practice_quality import standalone_issue
+    assert standalone_issue('光合作用释放的氧气来自何处？', 'Oxygen is released as a byproduct.')
+    assert standalone_issue('光合作用释放的氧气来自何处？', '氧气来自水的分解。') == ''
+
+
 def test_mnemonic_rejects_ambiguous_or_mismatched_cues():
     from backend import study_chat
     from types import SimpleNamespace
