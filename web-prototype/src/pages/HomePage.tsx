@@ -1,13 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { Icon } from '../components/Icon'
 import { onlineTrial } from '../deployment'
-import companion from '../assets/handbook/paper-companion.svg'
-import plus from '../assets/handbook/plus.svg'
-import folder from '../assets/handbook/folder.svg'
-import targetChevron from '../assets/handbook/target-chevron.svg'
-import arrow from '../assets/handbook/arrow.svg'
-import recent from '../assets/handbook/recent.svg'
-import recentChevron from '../assets/handbook/recent-chevron.svg'
 import type { StudyTurn } from '../api/study'
 import { StudyTurnCard } from './StudyConversation'
 
@@ -41,24 +34,21 @@ export function HomePage(props: Props) {
   }
 
   return <div className={`home-page page-enter${hasThread ? ' study-home' : ''}`}>
-    {hasThread ? <>
-      <header className="study-thread-header">
-        <div><h1>学习对话</h1><small>{latest.libraryName}</small></div>
-        <button className="archive-link" disabled={props.submitting} onClick={props.onNewThread}><Icon name="plus" size={15}/>新对话</button>
-      </header>
-      <section className="study-thread" aria-label="对话记录">
+    <header className="study-thread-header">
+      <div>
+        <a className="back-link" href="#home"><Icon name="back" size={17}/>首页</a>
+        <h1>学习对话</h1>
+        {hasThread && <small>{latest.libraryName}</small>}
+      </div>
+      {hasThread
+        ? <button className="archive-link" disabled={props.submitting} onClick={props.onNewThread}><Icon name="plus" size={15}/>新对话</button>
+        : <button className="archive-link" onClick={props.onRecent}><Icon name="clock" size={16}/>最近出题</button>}
+    </header>
+    {hasThread ? <section className="study-thread" aria-label="对话记录">
         {props.turns.map(turn => <StudyTurnCard key={turn.id} turn={turn} revision={props.revision}
           onOpen={props.onOpenTask} onSaved={props.onSaved} onRetry={turn.id === latest.id ? props.onRetry : undefined}
           onPrompt={turn.id === context?.id && !props.requirement.trim() ? suggest : undefined}/>)}
-      </section>
-    </> : <section className="assistant-intro" aria-labelledby="home-heading">
-      <div className="assistant-copy">
-        <span className="handbook-tag">学习手帐</span>
-        <h1 id="home-heading">今天想<br/>练什么？</h1>
-        <p className="intro-copy">{props.studyEnabled ? <>加一份资料，<br/>聊懂它，再练习。</> : <>从手边的资料，<br/>开始一组练习。</>}</p>
-      </div>
-      <img className="assistant-art" src={companion} width="194" height="206" alt=""/>
-    </section>}
+    </section> : <p className="study-intro">添加学习资料，再告诉知学伴你想怎么学。</p>}
     <form className="composer" aria-label={props.studyEnabled ? '发送学习要求' : '出题'} onSubmit={event => { event.preventDefault(); props.onGenerate() }}>
       {context && <p className="study-context"><Icon name="file" size={14}/> 沿用 {context.sources.join('、')}</p>}
       <div className="composer-input">
@@ -85,27 +75,22 @@ export function HomePage(props: Props) {
       </li>)}</ul>}
       <div className="composer-tools">
         <button type="button" disabled={props.submitting} className="add-file-button" aria-label="添加学习资料" onClick={() => fileInput.current?.click()}>
-          <img src={plus} width="17" height="17" alt=""/>加资料
+          <Icon name="plus" size={18}/>加资料
         </button>
         <input ref={fileInput} type="file" hidden multiple accept=".docx,.pdf,.png,.jpg,.jpeg,.webp,.bmp,.txt" aria-label="选择知识文件" onChange={event => { props.onFiles(Array.from(event.target.files ?? [])); event.target.value = '' }}/>
         <button type="button" disabled={props.submitting} className="archive-target" aria-label={`归档知识库：${props.libraryTitle}`} title={`归档知识库：${props.libraryTitle}`} onClick={props.onTarget}>
-          <img src={folder} width="17" height="17" alt=""/>
+          <Icon name="folder" size={17}/>
           <span className="archive-target-copy"><small>归档到</small><strong>{props.libraryTitle}</strong></span>
-          <img src={targetChevron} width="12" height="12" alt=""/>
+          <Icon name="chevron" size={13}/>
         </button>
         <button className="send-button" type="submit" aria-label={props.studyEnabled ? '发送学习要求' : '开始生成题目'} disabled={props.submitting || (!props.files.length && !props.requirement.trim())}>
-          <img src={arrow} width="17" height="17" alt=""/>{props.studyEnabled ? '发送' : '出题'}
+          <Icon name="send" size={17}/>{props.studyEnabled ? '发送' : '出题'}
         </button>
       </div>
       {props.submitting && <p className="study-context" role="status">{props.uploadDetail || '正在提交学习任务…'}{props.uploadPercent !== null ? ` · ${props.uploadPercent}%` : ''}</p>}
       {props.feedback && <p className="generation-error" role="alert">{props.feedback}</p>}
     </form>
     {!hasThread && <p className="composer-hint">支持 Word、PDF、图片和 TXT{onlineTrial && <><br/>资料保存在试用服务器，请勿上传敏感文件。</>}</p>}
-    {!hasThread && <button type="button" className="last-generation" onClick={props.onRecent}>
-      <span className="recent-mark"><img src={recent} width="20" height="20" alt=""/></span>
-      <span className="recent-copy"><strong>最近出题</strong><small>查看出题进度与历史结果</small></span>
-      <img src={recentChevron} width="17" height="17" alt=""/>
-    </button>}
     <div ref={bottom}/>
   </div>
 }
