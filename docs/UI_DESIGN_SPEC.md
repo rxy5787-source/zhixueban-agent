@@ -45,9 +45,16 @@
 ## 验证与迁移
 
 - 运行 `npm.cmd run check` 与 `npm.cmd run build`。Chrome Playwright 检查 360、393、412 和 1366 px 的首页、对话、知识库、键盘进入、文件选择与移除、搜索、详情跳转及导航，并额外检查 650 px 双列断点。基线与新版截图使用相同的浏览器视口。
+- 知识库的断网提示与恢复测试通过。部署包的 `test_web_trial.py` 18 项全部通过，有一条既有 Starlette TestClient 的依赖弃用警告。
 - 用项目 SQL 短 TXT 和本机 Qwen3 1.7B 跑过真实浏览器提交、后台任务恢复、答案解析、提交练习、知识点分析和题目集归档。建库、移入回收站和恢复使用独立验收数据。
 - 本轮未逐项重跑所有 PDF、DOCX、图片推理、云端试用以及长时间性能场景。个人中心、报告与出题页保留现有布局，第一轮共享新的基础色与控件规范。
 - Android 后续可用 Material 3 颜色角色映射语义令牌，间距与触控区映射 dp，字号映射 sp 并遵循系统字体缩放。优先迁移首页、学习对话和主题条目，再按读题流程迁移状态、解析及报告。沿用已有接口和数据层。
 - 可编辑 Figma 文件包含首页、学习对话及知识库的 393 px 画板。代码保留交互状态的最终实现。[打开设计稿](https://www.figma.com/design/3Z0bqKYML9IcguhtLcIUSW)
 
 在项目根目录运行 `pwsh -File tools/start-web-study-preview.ps1 -PythonProject ./python-ai -Port 18122` 可重新构建并启动本机预览。真实生成使用本机已运行的 Ollama 和 Qwen3。
+
+## 本轮修改
+
+- `web-prototype/src/App.tsx` 和 `main.tsx` 接入新首页、对话路由、样式及知识库读取状态。
+- `pages/WelcomePage.tsx`、`HomePage.tsx`、`LibraryPage.tsx` 实现首页、对话输入区和知识库目录与详情。
+- `styles/tokens.css` 和 `editorial.css` 定义令牌与版式，`app.css` 和 `handbook.css` 移除对应的旧首页、模拟手机外壳和拟物书架样式。
