@@ -467,6 +467,5 @@ export function App() {
         {panel.type === 'settings' && <><p className="sheet-description">让学习空间保持简单、清晰。</p><div className="settings-row"><span>外观</span><strong>森林文献馆</strong></div><div className="settings-row"><span>学习数据</span><strong>{onlineTrial ? '保存在试用服务器' : '保存在本机'}</strong></div><p className="supporting">昵称与学习偏好保存在当前浏览器，练习记录来自当前学习空间。</p><button className="secondary-button" onClick={()=>setPanel({type:'demo'})}>使用说明</button><button className="secondary-button reset-demo" onClick={resetDemo}>清空出题草稿</button></>}
       </Sheet>}
     </div></div>
-    <footer className="preview-footer">{onlineTrial ? '在线千问出题 · 卡片练习' : '本机千问出题 · 卡片练习'}</footer>
   </div>
 }
