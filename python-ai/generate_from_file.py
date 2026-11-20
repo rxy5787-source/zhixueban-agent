@@ -240,7 +240,7 @@ def split_text(text):
 # 8. 调用千问自动生成题目
 # =====================================
 
-def generate_questions(material, question_count=None, knowledge_points=None, timeout=600, raw_candidates=False, feedback=None, requirements="", difficulty=0, used_evidence=None, allow_rule_generation=True, compact_source=False):
+def generate_questions(material, question_count=None, knowledge_points=None, timeout=600, raw_candidates=False, feedback=None, requirements="", difficulty=0, used_evidence=None, allow_rule_generation=True, compact_source=False, practice_context=""):
 
     requested = question_count or QUESTIONS_PER_PART
     # Evidence is copied by index; a small model must not freely rewrite it.
@@ -298,6 +298,12 @@ def generate_questions(material, question_count=None, knowledge_points=None, tim
             '若考某概念的作用，正确选项须保留原文的关键动作和对象，不能改写成另一种作用。'
             '按用户使用的语言出题，专有术语可以保留原文写法。'
         )
+        if re.search(r'用英文|英文作答|\bin English\b', requirements, re.I):
+            prompt += (
+                '\nWrite question as a standalone interrogative ending in ?. '
+                'Example: “Which address identifies the intended receiver?” '
+                'Keep the source sentence as evidence only. Do not copy that declaration into question.'
+            )
         if len(segments) >= requested * 3 and requested > 1:
             ranges = [f'{i * len(segments) // requested}–{(i + 1) * len(segments) // requested - 1}' for i in range(requested)]
             prompt += '\n若学习者未限定具体考点，优先从这些编号区间各选一个有完整依据的不同考点：' + '、'.join(ranges)
@@ -307,6 +313,8 @@ def generate_questions(material, question_count=None, knowledge_points=None, tim
             prompt += '\n数量题沿用这些完整题干，选项使用相同单位和不同数值：' + json.dumps(hints,ensure_ascii=False)
         if feedback:
             prompt += '\n避免上一批的问题：' + feedback
+        if practice_context:
+            prompt += '\n' + practice_context + '\n先从编号资料选出全新的事实，再写能由该句直接解答的题目。'
     text = {"type":"string","minLength":1}
     props = {"sourceIndex":{"type":"integer","enum":list(range(len(segments)))},"question":text,"options":{"type":"object","properties":{x:text for x in "ABCD"},"required":list("ABCD"),"additionalProperties":False},"answer":{"type":"string","enum":list("ABCD")},"knowledgePoint":{"type":"string","enum":point_names} if point_names else text,"difficulty":{"type":"string","enum":(["简单","中等","困难"] if not difficulty else [["简单","中等","困难"][difficulty-1]])}}
     props['question']={'type':'string','minLength':6,'pattern':'[？?]$'}

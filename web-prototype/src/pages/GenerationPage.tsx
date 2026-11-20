@@ -80,6 +80,9 @@ export function GenerationPage({taskId,uploadPercent,uploadDetail,submittingExam
   </div>
   if(practicing && task && canPractice)return <PracticePage taskId={task.taskId} questions={questions} onExit={()=>onPractice(false)}/>
   const duration = task?.created ? Math.max(0, Math.round((finished ? (task.updated ?? task.created) : Date.now()/1000) - task.created)) : null
+  const lastPhase = task?.events.at(-1)
+  const phaseSeconds = running && lastPhase && lastPhase.stage === task?.stage
+    ? Math.max(0, Math.floor(Date.now() / 1000 - lastPhase.created)) : null
   return <div className="generation-page page-enter">
     <button className="back-link" onClick={onBack} disabled={!taskId}><Icon name="back" size={18}/>{running ? '回到首页，任务继续' : '回到首页'}</button>
     <header className="generation-intro">
@@ -89,7 +92,7 @@ export function GenerationPage({taskId,uploadPercent,uploadDetail,submittingExam
     </header>
     {!finished && <div className="live-stage" role="status">{!taskId ? submittingExam ? '正在生成题目与解析…' : uploadPercent===100 ? '文件已发送，正在校验与创建任务…' : `上传中${uploadPercent===null ? '…' : ` · ${uploadPercent}%（实际传输）`}` : error ? '暂时无法更新进度' : task?.stage ?? '正在查询任务…'}</div>}
     {!taskId && !submittingExam && uploadDetail && <p className="generation-counts" role="status">{uploadDetail}</p>}
-    {running && <p className="generation-counts">可切换页面，之后从页头「出题任务」返回。</p>}
+    {running && <p className="generation-counts">{phaseSeconds === null ? '' : `当前步骤已用 ${phaseSeconds} 秒 · `}可从「出题任务」返回查看。</p>}
     {task && <p className="generation-counts">{task.acceptedQuestionCount} 道可练习 · 目标 {task.requestedQuestionCount} 道{running ? ` · 已生成 ${task.generatedQuestionCount} 道候选` : ''}</p>}
     {exam && <p className="prototype-note">原创模拟题 · {exam.label} · <a href={exam.reference} target="_blank" rel="noreferrer">考点出处</a></p>}
     {canPractice && <div className="result-actions">

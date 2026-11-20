@@ -93,7 +93,7 @@
                  db.execute('INSERT INTO web_submissions VALUES(?,?,?)', (clientRequestId, ident, fingerprint))
 --- a/backend/worker.py
 +++ b/backend/worker.py
-@@ -44,6 +44,9 @@
+@@ -46,6 +46,9 @@
                  except Exception as exc:self.store.update(job['id'],'failed','处理失败',error=f'{type(exc).__name__}: {exc}'[:500])
              else:self.stop.wait(.4)
      def supervise(self,job,target=run_job_process):
@@ -103,7 +103,7 @@
          args=(str(self.store.root),job)
          if target is run_job_process:
              args+=(type(self.store),)
-@@ -75,7 +78,7 @@
+@@ -81,7 +84,7 @@
          import generate_from_file as generator
          import automatic_question_validator as validator
          import multimodal_reader as reader
@@ -112,7 +112,7 @@
          generator.OLLAMA_URL=validator.OLLAMA_URL=config.OLLAMA_URL
          generator.MODEL_NAME=validator.REVIEW_MODEL=config.TEXT_MODEL
          reader.VISION_MODEL=config.VISION_MODEL
-@@ -99,7 +102,9 @@
+@@ -108,7 +111,9 @@
              try:
                  validate_file(Path(source['path']),source['name'])
                  report['parsing']=[]
@@ -123,7 +123,7 @@
                  file_parts=0
                  for section in sections:
                      if self.cancelled(job) or len(accepted)>=job['request']['questionCount']:break
-@@ -123,6 +128,11 @@
+@@ -132,6 +137,11 @@
                          checkpoint('已跳过缺少正文的段落')
                          continue
                      source_parts = split_practice_text(material, generator.MAX_CHARS) if model_only else generator.split_text(material)
@@ -135,19 +135,19 @@
                      for part in source_parts:
                          if self.cancelled(job) or len(accepted)>=job['request']['questionCount']:break
                          if file_parts>=config.MAX_PARTS or parts>=12:break
-@@ -151,7 +161,7 @@
-                                 checkpoint(f'{stage} · {source["name"]} 第{file_parts}段')
+@@ -161,7 +171,7 @@
                                  remaining=job['request']['questionCount']-len(accepted)
                                  count=min(4,remaining+1) if model_only else min(3,remaining)
--                                created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=job['request'].get('requirements',''),difficulty=job['request'].get('difficulty',0),used_evidence=[q['explanation'] for q in accepted],allow_rule_generation=not model_only,compact_source=model_only)
-+                                created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=requirements,difficulty=job['request'].get('difficulty',0),used_evidence=[q['explanation'] for q in accepted],allow_rule_generation=not model_only,compact_source=model_only)
-                                 if not created:rejected.append({'sourceFile':source['name'],'reasons':['本段没有新的、证据充分的可用题目']})
+                                 used_evidence = history_evidence.union(q['explanation'] for q in accepted)
+-                                created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=job['request'].get('requirements',''),difficulty=job['request'].get('difficulty',0),used_evidence=used_evidence,allow_rule_generation=not model_only,compact_source=model_only,practice_context=practice_context)
++                                created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=requirements,difficulty=job['request'].get('difficulty',0),used_evidence=used_evidence,allow_rule_generation=not model_only,compact_source=model_only,practice_context=practice_context)
+                                 if not created:rejected.append({'sourceFile':source['name'],'reasons':[EXHAUSTED if practice_context else '本段没有新的、证据充分的可用题目']})
                                  for q in created:
                                      if isinstance(q,dict):
-@@ -164,6 +174,15 @@
-                                 checkpoint(f'自动质量初筛 · {source["name"]} 第{file_parts}段')
-                                 review=web_question_review.validate_questions if model_only else validator.validate_questions
-                                 passed,bad=review(created,part,accepted)
+@@ -178,6 +188,15 @@
+                                         lambda: checkpoint('自动质量初筛 · 等待本机模型独立复核'))
+                                 else:
+                                     passed,bad=validator.validate_questions(created,part,accepted)
 +                                if model_only:
 +                                    useful=[]
 +                                    for q in passed:

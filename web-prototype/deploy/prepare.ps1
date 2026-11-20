@@ -35,7 +35,7 @@ try {
         Copy-Item -LiteralPath (Join-Path $pythonRoot $name) -Destination (Join-Path $stage 'server')
     }
     $backendFiles = '__init__.py', 'config.py', 'content_exporter.py', 'exam_practice.py', 'file_storage.py',
-        'job_store.py', 'knowledge_extractor.py', 'literal_evidence.py', 'model_status.py', 'practice_quality.py',
+        'job_store.py', 'knowledge_extractor.py', 'literal_evidence.py', 'model_status.py', 'practice_quality.py', 'practice_variety.py',
         'schemas.py', 'web_api.py', 'web_content.py', 'web_practice.py', 'web_question_review.py', 'worker.py'
     foreach ($name in $backendFiles) {
         $source = Join-Path $pythonRoot "backend/$name"

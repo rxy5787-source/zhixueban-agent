@@ -10,6 +10,7 @@ from .file_storage import validate_file
 from .job_store import Store
 from .knowledge_extractor import derive_points
 from .practice_quality import looks_like_ocr_table, split_practice_text, usable_practice_text
+from .practice_variety import EXHAUSTED, REPEATED, PracticePlan
 from .schemas import Point
 
 def run_job_process(root, job, store_type=Store):
@@ -89,6 +90,9 @@ class Runner:
         generator.AUDIT=validator.AUDIT=reader.AUDIT=lambda phase,response:self.store.record_call(job['id'],phase,response)
         accepted=[];rejected=[];reports=[{'name':'上传资料','status':'error','error':str(w)[:300]} for w in job['request'].get('uploadWarnings',[])];parts=0;start=time.monotonic();auto_points=not job['request']['points']
         model_only=job['request'].get('requireModelGeneration',False)
+        practice_plan = self.store.practice_plan(job) if model_only and hasattr(self.store, 'practice_plan') else PracticePlan()
+        practice_context = practice_plan.instructions()
+        history_evidence = practice_plan.evidence
         retry_budget=1
         def checkpoint(stage):
             self.store.update(job['id'],'running',stage,result_bundle(self.store.service_id,job,accepted,rejected,reports))
@@ -153,11 +157,12 @@ class Runner:
                                         retry_budget-=1
                                     checkpoint('根据质检原因重新生成')
                                 stage='AI生成题目（同步提取知识点）' if model_only and auto_points else 'AI生成题目'
-                                checkpoint(f'{stage} · {source["name"]} 第{file_parts}段')
+                                checkpoint(f'{stage} · 等待本机模型 · {source["name"]} 第{file_parts}段')
                                 remaining=job['request']['questionCount']-len(accepted)
                                 count=min(4,remaining+1) if model_only else min(3,remaining)
-                                created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=job['request'].get('requirements',''),difficulty=job['request'].get('difficulty',0),used_evidence=[q['explanation'] for q in accepted],allow_rule_generation=not model_only,compact_source=model_only)
-                                if not created:rejected.append({'sourceFile':source['name'],'reasons':['本段没有新的、证据充分的可用题目']})
+                                used_evidence = history_evidence.union(q['explanation'] for q in accepted)
+                                created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=job['request'].get('requirements',''),difficulty=job['request'].get('difficulty',0),used_evidence=used_evidence,allow_rule_generation=not model_only,compact_source=model_only,practice_context=practice_context)
+                                if not created:rejected.append({'sourceFile':source['name'],'reasons':[EXHAUSTED if practice_context else '本段没有新的、证据充分的可用题目']})
                                 for q in created:
                                     if isinstance(q,dict):
                                         if model_only and auto_points:
@@ -167,8 +172,12 @@ class Runner:
                                     if isinstance(q,dict) and job['request'].get('difficulty',0) and q.get('difficulty')!=['','简单','中等','困难'][job['request']['difficulty']]:q['difficultyError']=True
                                 report['generatedCandidates']=report.get('generatedCandidates',0)+len(created)
                                 checkpoint(f'自动质量初筛 · {source["name"]} 第{file_parts}段')
-                                review=web_question_review.validate_questions if model_only else validator.validate_questions
-                                passed,bad=review(created,part,accepted)
+                                if model_only:
+                                    passed,bad=web_question_review.validate_questions(
+                                        created,part,accepted,practice_plan,
+                                        lambda: checkpoint('自动质量初筛 · 等待本机模型独立复核'))
+                                else:
+                                    passed,bad=validator.validate_questions(created,part,accepted)
                                 for q in passed:
                                     q.update(sourceFile=source['name'],sourceFileId=ident,sourceHash=source['sha256'],sourceLocation=section['location'],generationModel=q.get('generationModel',config.TEXT_MODEL),visualAssisted=section['visualAssisted'])
                                     q.update(extraction=section.get('extraction','text'),ocrConfidence=section.get('ocrConfidence'),textOnly=True)
@@ -195,4 +204,7 @@ class Runner:
             checkpoint('已保存文件结果')
         result=result_bundle(self.store.service_id,job,accepted,rejected,reports)
         state='cancelled' if self.cancelled(job) else ('partial' if accepted and (len(accepted)<job['request']['questionCount'] or any(f['status']=='error' for f in reports)) else 'succeeded' if accepted else 'failed')
-        self.store.update(job['id'],state,'已结束',result,error='' if accepted or state=='cancelled' else '没有可导入题目，请查看文件与质检原因')
+        reasons = {reason for row in rejected for reason in row.get('reasons', [])}
+        exhausted = bool(reasons) and reasons <= {EXHAUSTED, REPEATED}
+        error = '' if accepted or state=='cancelled' else EXHAUSTED if exhausted else '没有可导入题目，请查看文件与质检原因'
+        self.store.update(job['id'],state,'已结束',result,error=error)

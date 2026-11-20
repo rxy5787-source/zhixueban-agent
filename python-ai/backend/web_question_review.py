@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 import automatic_question_validator as validator
 from .literal_evidence import review_quantity
 from .practice_quality import source_units, standalone_issue
+from .practice_variety import REPEATED
 
 
 class Review(BaseModel):
@@ -30,6 +31,8 @@ ISSUES = {
 NAMED_ENTRY = re.compile(r'^([^：:，。；;]{2,45})[：:]')
 GENERIC_ANSWER = re.compile(r'^([\w\u4e00-\u9fff]{2,8})(?:方式|方法|类型|类别)$')
 NAMED_OPTION = re.compile(r'(.+?)\s*\(([A-Z][A-Z0-9-]{1,9})\)$')
+SYMBOL_OPTION = re.compile(r'[A-Za-z][A-Za-z0-9_-]+(?:\s+[A-Za-z0-9_-]+){0,3}')
+UPPER_TOKEN = re.compile(r'\b[A-Z][A-Z0-9_-]+\b')
 
 
 def leaks_answer(stem, option):
@@ -56,6 +59,28 @@ def resolve_evidence(question, units):
     return matches[0] if len(matches) == 1 else proposed
 
 
+def literal_citations(option, units):
+    option = unicodedata.normalize('NFKC', option).strip()
+    if not SYMBOL_OPTION.fullmatch(option) or not UPPER_TOKEN.search(option):
+        return []
+    plural = '' if option.isupper() else '(?:s|es)?'
+    literal = re.compile(r'(?<![a-z0-9_-])' + re.escape(option) + plural + r'(?![a-z0-9_-])', re.IGNORECASE | re.ASCII)
+    return [unit for unit in units if literal.search(unit)]
+
+
+def check_citation(question, units):
+    quote = resolve_evidence(question, units)
+    if not quote:
+        return '', '出题时缺少可定位的完整原文依据'
+    matches = literal_citations(question['options'][question['answer']], units)
+    if len(matches) == 1:
+        # Repair index drift only. The independent reviewer still solves using this exact sentence.
+        return matches[0], ''
+    if matches and quote not in matches:
+        return '', '所选原文不含答案术语，其他资料又有多处匹配，无法确定正确引文'
+    return quote, ''
+
+
 def request_reviews(candidates, units):
     # Independently answer using the cited literal evidence, without the proposed answer.
     tasks = [{'id': ident, 'question': q['question'], 'options': q['options'], 'evidence': q['explanation']}
@@ -70,6 +95,14 @@ def request_reviews(candidates, units):
         '有唯一答案时返回正确字母和 ok；拒绝时 answer 必须是 X。'
         '每题返回一次 id、answer、issue，只输出 JSON。\n'
     )
+    if all(not re.search(r'[\u4e00-\u9fff]', task['question']) for task in tasks):
+        prompt = (
+            'Independently answer each question using only its evidence. Compare all four choices, '
+            'including details such as source vs destination. Other source text may show a conflict '
+            'but must not supply a missing answer. Return its id, the unique answer letter and issue ok. '
+            'For multiple answers use ambiguous, missing support use unsupported, an expressly required '
+            'missing figure use visual, or unclear wording use vague, with answer X. Return only JSON.\n'
+        )
     if other_source:
         prompt += f'其他资料：\n{other_source}\n'
     prompt += '待答题目：' + json.dumps(tasks, ensure_ascii=False, separators=(',', ':'))
@@ -91,7 +124,7 @@ def request_reviews(candidates, units):
     return rows
 
 
-def validate_questions(questions, source, previous):
+def validate_questions(questions, source, previous, practice_plan=None, on_model_review=None):
     units = source_units(source)
     errors = {}
     literals = {}
@@ -105,18 +138,21 @@ def validate_questions(questions, source, previous):
         answer = validator.normalize(q['options'][q['answer']])
         stem = validator.normalize(q['question'])
         generic = GENERIC_ANSWER.fullmatch(answer)
+        quote, citation_issue = check_citation(q, units)
         if leaks_answer(q['question'], q['options'][q['answer']]):
             reasons.append('题干直接包含正确选项，泄露答案')
         elif generic and generic[1] in stem and re.search(r'什么方式|哪种方式|方式是什么|属于哪(?:种|类)', stem):
             reasons.append('正确选项只是复述题干中的类别名称，缺少可区分的考点')
-        elif not (quote := resolve_evidence(q, units)):
-            reasons.append('出题时缺少可定位的完整原文依据')
+        elif citation_issue:
+            reasons.append(citation_issue)
         elif issue := standalone_issue(q['question'], quote, list(q['options'].values())):
             reasons.append(issue)
         elif quote in previous_evidence:
             reasons.append('与已保留题目重复考查同一证据或题意')
         elif validator.find_near_duplicate(q['question'], previous):
             reasons.append('与已保留的题目文字高度相似')
+        elif practice_plan and practice_plan.duplicate(q, quote):
+            reasons.append(REPEATED)
         else:
             evidence[ident] = quote
             literal = review_quantity(q, source)
@@ -131,6 +167,8 @@ def validate_questions(questions, source, previous):
     seen = set()
     if pending:
         try:
+            if on_model_review:
+                on_model_review()
             for row in request_reviews(pending, units):
                 ident = row.get('id') if isinstance(row, dict) else None
                 if type(ident) is not int or ident not in pending:
