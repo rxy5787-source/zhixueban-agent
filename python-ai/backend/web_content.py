@@ -19,7 +19,7 @@ def eligible(item):
             and len(set(item['options']))==4 and all(isinstance(x,str) and x.strip() for x in item['options'])
             and item.get('answer') in ('A','B','C','D')
             and bool(item.get('prompt')) and bool(item.get('explanation')) and bool(item.get('points'))
-            and not standalone_issue(item['prompt'],item['explanation'])
+            and not standalone_issue(item['prompt'],item['explanation'],item['options'])
             and bool(meta.get('questionId')) and bool(meta.get('sourceFileId')))
 
 def questions(job, library_id):

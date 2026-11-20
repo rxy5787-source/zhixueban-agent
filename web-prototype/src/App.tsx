@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { onlineTrial } from './deployment'
 import { DESTINATIONS, LIBRARY_SEEDS } from './data/demo'
 import type { Destination, Library, LibraryDocument } from './data/demo'
-import { api, clearPendingSubmission, isActiveTask, submitTask } from './api/generation'
+import { api, ApiHttpError, clearPendingSubmission, isActiveTask, submitTask } from './api/generation'
 import type { DeletedLibrary, LibraryItem, PracticeHistory, StoredLibrary } from './api/generation'
 import { readGenerationRequest } from './api/generationRequest'
 import { useTaskHistory } from './api/useTaskHistory'
@@ -75,6 +75,10 @@ export function App() {
   const [libraryRead, setLibraryRead] = useState<{ loading: boolean; error: string }>({ loading: true, error: '' })
   const [studyEnabled, setStudyEnabled] = useState(false)
   const [studyTurns, setStudyTurns] = useState(readStudyThread)
+  const [missingStudyTasks, setMissingStudyTasks] = useState<ReadonlySet<string>>(() => new Set())
+  const markStudyTaskMissing = useCallback((id: string) => {
+    setMissingStudyTasks(previous => previous.has(id) ? previous : new Set([...previous, id]))
+  }, [])
   const [targetId, setTargetId] = useState(()=>uploadDraft()?.libraryId ?? readStudyThread().at(-1)?.libraryId ?? 'sql')
   useEffect(() => {
     const controller = new AbortController()
@@ -185,7 +189,8 @@ export function App() {
     setTargetId(libraryId)
     setRequirement('根据资料优先生成本知识库薄弱知识点的四选一单选题')
     setFeedback('')
-    const previous = studyEnabled && studyTurns.at(-1)?.libraryId === libraryId ? studyTurns.at(-1) : undefined
+    const latestStudy = studyTurns.at(-1)
+    const previous = studyEnabled && latestStudy?.libraryId === libraryId && !missingStudyTasks.has(latestStudy.id) ? latestStudy : undefined
     setNotice(previous ? '将沿用当前对话的资料。确认要求后发送。' : '请添加相关学习资料，再点击出题。')
   }
   function clearDraft() {
@@ -201,6 +206,7 @@ export function App() {
   function newStudyThread() {
     if (submitting) return
     setStudyTurns([])
+    setMissingStudyTasks(new Set())
     clearDraft()
     setNotice('已开启新对话')
   }
@@ -308,11 +314,16 @@ export function App() {
     if(active)window.location.hash=hash
     else window.history.replaceState(null,'',`#${hash}`)
   }
+  const target = libraries.find(library => library.id === targetId) ?? libraries[0]
+  const latestTurn = studyTurns.at(-1)
+  const storedContext = latestTurn?.libraryId === target?.id ? latestTurn : undefined
+  const contextTurn = storedContext && !missingStudyTasks.has(storedContext.id) ? storedContext : undefined
+
   async function generate(){
     if (submitting || (!files.length && !requirement.trim())) return
     if(!target){setPanel({type:'target'});return}
     const message = requirement.trim() || '根据资料生成选择题'
-    const parent = studyEnabled && !files.length && studyTurns.at(-1)?.libraryId === target.id ? studyTurns.at(-1) : undefined
+    const parent = studyEnabled && !files.length ? contextTurn : undefined
     const inStudy = studyEnabled && (!!files.length || !!parent)
     const intent = studyIntent(message, parent?.kind)
     const studyKind = inStudy ? intent : 'single_choice'
@@ -349,7 +360,13 @@ export function App() {
           body: JSON.stringify({ ...library, topic: request.topic, questionCount: request.questionCount }),
         })
         : parent
-          ? await continueStudy(parent.id, generationRequirements || message, studyKind, request.questionCount)
+          ? await continueStudy(parent.id, generationRequirements || message, studyKind, request.questionCount).catch(error => {
+              if (error instanceof ApiHttpError && error.status === 404) {
+                markStudyTaskMissing(parent.id)
+                throw new Error('当前学习空间找不到上一轮任务。请重新上传原资料，再发送这条要求。')
+              }
+              throw error
+            })
           : await submitTask(files.map(file => file.file), {
             ...library, requirements: generationRequirements, questionCount: String(request.questionCount), questionType: studyKind,
           }, setUploadPercent, setUploadDetail)
@@ -374,7 +391,6 @@ export function App() {
     finally{setSubmitting(null)}
   }
 
-  const target = libraries.find(library => library.id === targetId) ?? libraries[0]
   const activeTaskCount=tasks.filter(isActiveTask).length
   const latest=tasks[0]?.taskId ?? (tasksLoaded ? '' : recentTask)
   const activeLibrary = libraries.find(library => library.id === route.libraryId)
@@ -405,7 +421,8 @@ export function App() {
               onRemoveQuestion={(question,libraryName)=>manageItem({kind:'question',id:question.id,label:question.prompt,libraryId:question.libraryId,libraryName})}/>
           ) : route.study ? (
             <HomePage files={files} requirement={requirement} libraryTitle={target?.title ?? '选择知识库'} feedback={feedback}
-              studyEnabled={studyEnabled} turns={studyTurns} contextTurn={studyTurns.at(-1)?.libraryId === target?.id ? studyTurns.at(-1) : undefined}
+              studyEnabled={studyEnabled} turns={studyTurns} contextTurn={contextTurn}
+              missingTasks={missingStudyTasks} onMissingTask={markStudyTaskMissing}
               submitting={!!submitting} uploadPercent={uploadPercent} uploadDetail={uploadDetail} revision={contentRevision}
               onNewThread={newStudyThread} onOpenTask={openTask} onRetry={retryStudyTurn} onSaved={refreshLibraries}
               onFiles={selectFiles} onRemove={id=>{setFiles(previous=>previous.filter(file=>file.id!==id));setFeedback('')}}
@@ -462,7 +479,12 @@ export function App() {
         {historyPath && !currentHistory && <p className="supporting" role="status">正在读取练习数据…</p>}
         {historyPath && currentHistory?.error && <p className="field-error" role="alert">{currentHistory.error}</p>}
         {panel.type === 'records' && currentHistory?.data && <><p className="sheet-description">{panelLibrary ? `${panelLibrary.title} · 最近练习` : '各知识库的最近练习'}</p><div className="example-records">{currentHistory.data.sessions.map(record => <div key={record.sessionId}><Icon name="clock" size={19}/><span><strong>{record.libraryName}</strong><small>{new Date(record.created * 1000).toLocaleString('zh-CN')}</small></span><b>答对 {record.correct}/{record.answered} 题</b><button className="archive-link record-return" onClick={()=>openTask(record.taskId)}>查看题目<Icon name="chevron" size={13}/></button></div>)}</div>{!currentHistory.data.sessions.length && <p className="supporting">完成一组练习后，记录会显示在这里。</p>}</>}
-        {panel.type === 'analysis' && currentHistory?.data && <><p className="sheet-description">{panelLibrary?.title} · 根据累计作答估计掌握情况</p><PointProgressList points={currentHistory.data.points}/></>}
+        {panel.type === 'analysis' && currentHistory?.data && <>
+          <p className="sheet-description">{panelLibrary?.title} · 根据累计作答估计掌握情况</p>
+          <PointProgressList points={currentHistory.data.points}/>
+          {panelLibrary && currentHistory.data.points.some(point => point.reviewPriority) &&
+            <button className="secondary-button" onClick={() => prepareWeakPointReview(panelLibrary.id)}>按薄弱点出题<Icon name="arrow" size={16}/></button>}
+        </>}
         {panel.type === 'overview' && <><p className="sheet-description">总览入口留在“我的”。具体知识点与学习建议，回到对应知识库查看。</p><div className="overview-libraries">{libraries.map(library => <button key={library.id} onClick={() => { navigate('libraries', library.id) }}><span className={`target-mark cover-${library.color}`}>{library.mark}</span><span><strong>{library.title}</strong><small>进入知识库查看学习分析</small></span><Icon name="chevron" size={16}/></button>)}</div><p className="prototype-note">当前不展示未经计算的掌握概率或整体学习结论。</p></>}
         {panel.type === 'settings' && <><p className="sheet-description">让学习空间保持简单、清晰。</p><div className="settings-row"><span>外观</span><strong>森林文献馆</strong></div><div className="settings-row"><span>学习数据</span><strong>{onlineTrial ? '保存在试用服务器' : '保存在本机'}</strong></div><p className="supporting">昵称与学习偏好保存在当前浏览器，练习记录来自当前学习空间。</p><button className="secondary-button" onClick={()=>setPanel({type:'demo'})}>使用说明</button><button className="secondary-button reset-demo" onClick={resetDemo}>清空出题草稿</button></>}
       </Sheet>}

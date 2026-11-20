@@ -112,9 +112,10 @@ export function StudyResultCard({ task, onSaved, onPrompt }: ResultProps) {
   </article>
 }
 
-export function StudyTurnCard({ turn, onOpen, onSaved, onPrompt, onRetry, revision }: {
+export function StudyTurnCard({ turn, onOpen, onSaved, onPrompt, onRetry, revision, missing, onMissing, onReattach }: {
   turn: StudyTurn; onOpen: (id: string, practice?: boolean) => void; onSaved: () => Promise<void>
   onPrompt?: (text: string) => void; onRetry?: (id: string) => Promise<void>; revision: number
+  missing: boolean; onMissing: (id: string) => void; onReattach?: () => void
 }) {
   const [task, setTask] = useState<GenerationTask>()
   const [error, setError] = useState('')
@@ -130,6 +131,7 @@ export function StudyTurnCard({ turn, onOpen, onSaved, onPrompt, onRetry, revisi
     finally { setRetrying(false) }
   }
   useEffect(() => {
+    if (missing) return
     const controller = new AbortController()
     let timer: number | undefined
     async function poll() {
@@ -141,21 +143,31 @@ export function StudyTurnCard({ turn, onOpen, onSaved, onPrompt, onRetry, revisi
         if (isActiveTask(value)) timer = window.setTimeout(poll, 2400)
       } catch (cause) {
         if (controller.signal.aborted) return
+        if (cause instanceof ApiHttpError && cause.status === 404) {
+          onMissing(turn.id)
+          return
+        }
         setError(cause instanceof Error ? cause.message : '无法读取这轮对话')
         if (!(cause instanceof ApiHttpError) || cause.status >= 500) timer = window.setTimeout(poll, 6000)
       }
     }
     void poll()
     return () => { controller.abort(); window.clearTimeout(timer) }
-  }, [turn.id, attempt, revision])
+  }, [turn.id, attempt, revision, missing, onMissing])
 
   return <div className="study-turn">
     <div className="study-user-message"><p>{turn.requirement}</p>
       {turn.sources.length > 0 && <small className="study-context">{turn.sources.join('、')}</small>}
     </div>
-    <div className="study-assistant">
+    {missing ? <div className="generation-error" role="alert">
+      <p>当前学习空间找不到这轮任务。重新上传原资料后可以继续。</p>
+      <button className="archive-link" disabled={!onReattach} onClick={onReattach}>重新上传资料</button>
+    </div> : <div className="study-assistant">
       {!task && !error && <p className="study-status" role="status">正在读取任务…</p>}
-      {task && isActiveTask(task) && <p className="study-status" role="status"><Icon name="clock" size={16}/>{task.stage}</p>}
+      {task && isActiveTask(task) && <div>
+        <p className="study-status" role="status"><Icon name="clock" size={16}/>{error ? '正在重连任务状态…' : task.stage}</p>
+        {turn.kind === 'single_choice' && <button className="archive-link" onClick={() => onOpen(task.taskId)}>查看任务进度</button>}
+      </div>}
       {error && <div className="generation-error" role="alert"><p>{error}</p><button className="archive-link" onClick={() => setAttempt(value => value + 1)}>重新查询</button></div>}
       {task?.study?.result && <StudyResultCard task={task} onSaved={onSaved} onPrompt={onPrompt}/>}
       {task && !task.study && task.acceptedQuestionCount > 0 && <article className="study-result">
@@ -171,6 +183,6 @@ export function StudyTurnCard({ turn, onOpen, onSaved, onPrompt, onRetry, revisi
           <button className="archive-link" onClick={() => onOpen(task.taskId)}>查看任务详情</button>}
         {retryError && <p role="alert">{retryError}</p>}
       </div>}
-    </div>
+    </div>}
   </div>
 }

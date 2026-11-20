@@ -6,7 +6,7 @@ export type Question = {
   id: string; libraryId: string; prompt: string; options: string[]; answer: string
   explanation: string; points: string[]; difficulty: number; qualityStatus: string
   visualValidationLimit: string
-  ai: { sourceFile: string; sourceLocation: string; extraction: string; generationModel: string; reviewModel: string }
+  ai: { sourceFile: string; sourceLocation: string; evidenceQuote?: string; extraction: string; generationModel: string; reviewModel: string }
 }
 export type ExamTopic = 'mixed' | 'complement' | 'overflow' | 'floating' | 'graph' | 'cache'
 export type GenerationTask = {
