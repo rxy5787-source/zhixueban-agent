@@ -95,14 +95,6 @@ def request_reviews(candidates, units):
         '有唯一答案时返回正确字母和 ok；拒绝时 answer 必须是 X。'
         '每题返回一次 id、answer、issue，只输出 JSON。\n'
     )
-    if all(not re.search(r'[\u4e00-\u9fff]', task['question']) for task in tasks):
-        prompt = (
-            'Independently answer each question using only its evidence. Compare all four choices, '
-            'including details such as source vs destination. Other source text may show a conflict '
-            'but must not supply a missing answer. Return its id, the unique answer letter and issue ok. '
-            'For multiple answers use ambiguous, missing support use unsupported, an expressly required '
-            'missing figure use visual, or unclear wording use vague, with answer X. Return only JSON.\n'
-        )
     if other_source:
         prompt += f'其他资料：\n{other_source}\n'
     prompt += '待答题目：' + json.dumps(tasks, ensure_ascii=False, separators=(',', ':'))
