@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { api } from '../api/generation'
 import type { PracticeReport, Question } from '../api/generation'
 import { Icon } from '../components/Icon'
+import { QuestionEvidence } from '../components/QuestionEvidence'
 import { PointProgressList } from '../components/PointProgressList'
 
 export function PracticePage({ taskId, questions, onExit }: { taskId: string; questions: Question[]; onExit: () => void }) {
@@ -86,14 +87,19 @@ export function PracticePage({ taskId, questions, onExit }: { taskId: string; qu
             </label>
           })}
         </fieldset>
-        {submitted ? <div className="practice-feedback" role="status"><strong>{submitted === question.answer ? '答对了' : '这题答错了'} · 正确答案 {question.answer}</strong><p>{question.explanation}</p></div>
+        {submitted ? <div className="practice-feedback">
+          <strong role="status">{submitted === question.answer ? '答对了' : '这题答错了'} · 正确答案 {question.answer}</strong>
+          <p>{question.explanation}</p>
+          {question.ai.evidenceQuote?.trim() === question.explanation.trim() && <small>解析依据：资料原文摘录</small>}
+          <QuestionEvidence question={question}/>
+        </div>
           : <button className="primary-button" type="submit" disabled={!selected}>提交答案<Icon name="check" size={18}/></button>}
       </form>
       {submitted && <button className="primary-button" onClick={() => {
         setSelected(''); setIndex(index + 1)
         if (index + 1 === sessionQuestions.length) void recordPractice()
       }}>{index + 1 === sessionQuestions.length ? '查看练习结果' : '下一题'}<Icon name="arrow" size={18}/></button>}
-      <div className="point-chips">{question.points.map(point => <span key={point}>{point}</span>)}</div>
+      {submitted && <div className="point-chips">{question.points.map(point => <span key={point}>{point}</span>)}</div>}
       <p className="question-source">来源：{question.ai.sourceFile} · {question.ai.sourceLocation}</p>
       {question.visualValidationLimit && <p className="visual-limit">{question.visualValidationLimit}</p>}
     </article>

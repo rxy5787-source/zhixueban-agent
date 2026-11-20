@@ -60,11 +60,17 @@ def request_reviews(candidates, units):
     # Independently answer using the cited literal evidence, without the proposed answer.
     tasks = [{'id': ident, 'question': q['question'], 'options': q['options'], 'evidence': q['explanation']}
              for ident, q in candidates.items()]
-    source = '\n'.join(units)
-    prompt = f'''逐题独立解答，检查全部四项。仅当本题 evidence 直接支持唯一答案时，返回题目 id、正确字母 answer、issue 为 ok。若两项都描述了被考对象的属性或作用，按歧义处理。不可用另一句话替代本题 evidence，也不可用常识填补条件。有歧义用 ambiguous，依据不足用 unsupported，需图表用 visual，题意不清或选项不可比用 vague，这四种情况 answer 用 X。每题返回一次，只输出JSON。
-资料：
-{source}
-待答题目：{json.dumps(tasks, ensure_ascii=False, separators=(',', ':'))}'''
+    cited = {task['evidence'] for task in tasks}
+    other_source = '\n'.join(unit for unit in units if unit not in cited)
+    prompt = (
+        '独立检查每题的四个选项。只有本题 evidence 支持唯一答案才用 ok。'
+        '其他资料与其他题的引文可以用来发现冲突，不能代替本题 evidence。'
+        '多解用 ambiguous，证据不足用 unsupported，依赖图表用 visual，题意或选项无法判定用 vague。'
+        '以上四类的 answer 用 X。每题返回一次 id、answer、issue，只输出 JSON。\n'
+    )
+    if other_source:
+        prompt += f'其他资料：\n{other_source}\n'
+    prompt += '待答题目：' + json.dumps(tasks, ensure_ascii=False, separators=(',', ':'))
     schema = {'type': 'object', 'properties': {'reviews': {
         'type': 'array', 'minItems': len(tasks), 'maxItems': len(tasks),
         'items': Review.model_json_schema()}}, 'required': ['reviews'], 'additionalProperties': False}
@@ -89,6 +95,7 @@ def validate_questions(questions, source, previous):
     literals = {}
     pending = {}
     evidence = {}
+    previous_evidence = {q['evidenceQuote'] for q in previous if 'evidenceQuote' in q}
     for ident, q in enumerate(questions, 1):
         reasons = errors[ident] = validator.check_structure(q)
         if reasons:
@@ -102,6 +109,10 @@ def validate_questions(questions, source, previous):
             reasons.append('正确选项只是复述题干中的类别名称，缺少可区分的考点')
         elif not (quote := resolve_evidence(q, units)):
             reasons.append('出题时缺少可定位的完整原文依据')
+        elif issue := standalone_issue(q['question'], quote, list(q['options'].values())):
+            reasons.append(issue)
+        elif quote in previous_evidence:
+            reasons.append('与已保留题目重复考查同一证据或题意')
         elif validator.find_near_duplicate(q['question'], previous):
             reasons.append('与已保留的题目文字高度相似')
         else:
@@ -135,7 +146,7 @@ def validate_questions(questions, source, previous):
                 errors[ident].append(f'批量独立核验失败：{str(exc)[:120]}')
 
     passed, rejected = [], []
-    evidence_used = {q['evidenceQuote'] for q in previous if 'evidenceQuote' in q}
+    evidence_used = previous_evidence.copy()
     for ident, q in enumerate(questions, 1):
         reasons = errors[ident]
         quote = ''
@@ -157,9 +168,7 @@ def validate_questions(questions, source, previous):
             else:
                 quote = evidence[ident]
         if not reasons:
-            if issue := standalone_issue(q['question'], quote):
-                reasons.append(issue)
-            elif quote in evidence_used or validator.find_near_duplicate(q['question'], passed):
+            if quote in evidence_used or validator.find_near_duplicate(q['question'], passed):
                 reasons.append('与已保留题目重复考查同一证据或题意')
         if reasons:
             rejected.append({'indexInPart': ident, 'question': q if isinstance(q, dict) else repr(q),

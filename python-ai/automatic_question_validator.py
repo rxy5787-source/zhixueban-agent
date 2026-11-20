@@ -87,7 +87,7 @@ def check_structure(q: object) -> list[str]:
     if q.get("mappingError"):
         errors.append("知识点不在本次规范目录中")
     stem = q.get("question", "")
-    issue = standalone_issue(stem, q.get('explanation'))
+    issue = standalone_issue(stem, q.get('explanation'), list(opts.values()) if isinstance(opts, dict) else None)
     if issue:
         errors.append(issue)
     if isinstance(stem,str) and normalize(stem)==normalize(q.get('explanation','')):

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, ApiHttpError, isActiveTask } from '../api/generation'
 import type { GenerationTask, Question } from '../api/generation'
 import { Icon } from '../components/Icon'
+import { QuestionEvidence } from '../components/QuestionEvidence'
 import { PracticePage } from './PracticePage'
 import { StudyResultCard } from './StudyConversation'
 
@@ -104,9 +105,13 @@ export function GenerationPage({taskId,uploadPercent,uploadDetail,submittingExam
     {canPractice && <section className="generated-questions" aria-label={exam ? '计算专项题目' : '初筛通过的题目'}><div className="result-heading"><h2>题目预览</h2><span>{questions.length} 题</span></div>{questions.map((question,index)=><article className="generated-question" key={question.id}>
       <div className="question-metadata"><span>第 {index+1} 题 · 单选</span><span>{['','基础','中等','提高'][question.difficulty] ?? '未标注'}</span></div><h3>{question.prompt}</h3>
       <ol className="generated-options">{question.options.map((option,optionIndex)=><li key={optionIndex}><b>{'ABCD'[optionIndex]}</b><span>{option}</span></li>)}</ol>
-      <div className="point-chips">{question.points.map(point=><span key={point}>{point}</span>)}</div>
       <button className="answer-toggle" aria-expanded={revealed.has(question.id)} onClick={()=>setRevealed(previous=>{const next=new Set(previous);next.has(question.id) ? next.delete(question.id) : next.add(question.id);return next})}>{revealed.has(question.id) ? '收起答案与解析' : '查看答案与解析'}<Icon name="chevron" size={14}/></button>
-      {revealed.has(question.id) && <div className="real-explanation"><strong>正确答案：{question.answer}</strong><p>{question.explanation}</p><small>{exam ? '解析依据：题干条件与程序计算' : '解析依据：资料原文摘录'}</small></div>}
+      {revealed.has(question.id) && <div className="real-explanation">
+        <strong>正确答案：{question.answer}</strong><p>{question.explanation}</p>
+        <small>{exam ? '解析依据：题干条件与程序计算' : '解析依据：资料原文摘录'}</small>
+        <QuestionEvidence question={question}/>
+        <div className="point-chips">{question.points.map(point=><span key={point}>{point}</span>)}</div>
+      </div>}
       <p className="question-source">来源：{question.ai.sourceFile} · {question.ai.sourceLocation}</p>{question.visualValidationLimit && <p className="visual-limit">{question.visualValidationLimit}</p>}
       {saved && task && <button className="archive-link remove-link" aria-label={`移除第 ${index+1} 题`} onClick={()=>onRemoveQuestion(question,task.libraryName)}>移除本题</button>}
     </article>)}</section>}

@@ -8,6 +8,7 @@ export type SelectedFile = { id: string; name: string; file: File }
 type Props = {
   files: SelectedFile[]; requirement: string; libraryTitle: string; feedback: string
   studyEnabled: boolean; turns: StudyTurn[]; contextTurn?: StudyTurn
+  missingTasks: ReadonlySet<string>; onMissingTask: (id: string) => void
   submitting: boolean; uploadPercent: number | null; uploadDetail: string; revision: number
   onNewThread: () => void; onOpenTask: (id: string, practice?: boolean) => void
   onRetry: (id: string) => Promise<void>; onSaved: () => Promise<void>
@@ -47,6 +48,11 @@ export function HomePage(props: Props) {
     {hasThread ? <section className="study-thread" aria-label="对话记录">
         {props.turns.map(turn => <StudyTurnCard key={turn.id} turn={turn} revision={props.revision}
           onOpen={props.onOpenTask} onSaved={props.onSaved} onRetry={turn.id === latest.id ? props.onRetry : undefined}
+          missing={props.missingTasks.has(turn.id)} onMissing={props.onMissingTask}
+          onReattach={props.submitting ? undefined : () => {
+            if (!props.requirement.trim()) props.onRequirement(turn.requirement)
+            fileInput.current?.click()
+          }}
           onPrompt={turn.id === context?.id && !props.requirement.trim() ? suggest : undefined}/>)}
     </section> : <p className="study-intro">添加学习资料，再告诉知学伴你想怎么学。</p>}
     <form className="composer" aria-label={props.studyEnabled ? '发送学习要求' : '出题'} onSubmit={event => { event.preventDefault(); props.onGenerate() }}>
