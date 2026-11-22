@@ -94,7 +94,7 @@
                  db.execute('INSERT INTO web_submissions VALUES(?,?,?)', (clientRequestId, ident, fingerprint))
 --- a/backend/worker.py
 +++ b/backend/worker.py
-@@ -46,6 +46,9 @@
+@@ -57,6 +57,9 @@
                  except Exception as exc:self.store.update(job['id'],'failed','处理失败',error=f'{type(exc).__name__}: {exc}'[:500])
              else:self.stop.wait(.4)
      def supervise(self,job,target=run_job_process):
@@ -104,60 +104,23 @@
          args=(str(self.store.root),job)
          if target is run_job_process:
              args+=(type(self.store),)
-@@ -81,7 +84,7 @@
+@@ -89,13 +92,16 @@
+         current = self.store.get(job['id'])
+         return current['cancel'] or current['state'] in ('interrupted', 'cancelled')
+     def source_sections(self, job, ident, read):
+-        return read()
++        from .study_chat import choice_sections
++        return choice_sections(self.store, job, ident, read)
+ 
+     def choice_prompt(self, requirement):
+-        return requirement
++        from .study_chat import choice_requirements
++        return choice_requirements(requirement)
+ 
+     def teaching_issue(self, question, requirement):
+-        return ''
++        from .study_chat import choice_teaching_issue
++        return choice_teaching_issue(question, requirement)
+ 
+     def run(self, job):
          import generate_from_file as generator
-         import automatic_question_validator as validator
-         import multimodal_reader as reader
--        from . import web_question_review
-+        from . import study_chat, web_question_review
-         generator.OLLAMA_URL=validator.OLLAMA_URL=config.OLLAMA_URL
-         generator.MODEL_NAME=validator.REVIEW_MODEL=config.TEXT_MODEL
-         reader.VISION_MODEL=config.VISION_MODEL
-@@ -108,7 +111,9 @@
-             try:
-                 validate_file(Path(source['path']),source['name'])
-                 report['parsing']=[]
--                sections=reader.iter_automatic_sections(Path(source['path']),self.store.root/'ocr_cache',checkpoint,vision_fallback=job['request'].get('visionFallback',False))
-+                sections=study_chat.choice_sections(self.store,job,ident,lambda: reader.iter_automatic_sections(
-+                    Path(source['path']),self.store.root/'ocr_cache',checkpoint,
-+                    vision_fallback=job['request'].get('visionFallback',False)))
-                 file_parts=0
-                 for section in sections:
-                     if self.cancelled(job) or len(accepted)>=job['request']['questionCount']:break
-@@ -132,6 +137,11 @@
-                         checkpoint('已跳过缺少正文的段落')
-                         continue
-                     source_parts = split_practice_text(material, generator.MAX_CHARS) if model_only else generator.split_text(material)
-+                    original_requirements=job['request'].get('requirements','')
-+                    requirements=original_requirements
-+                    if model_only:
-+                        source_parts=study_chat.rank_choice_parts(source_parts,requirements)
-+                        requirements=study_chat.choice_requirements(requirements)
-                     for part in source_parts:
-                         if self.cancelled(job) or len(accepted)>=job['request']['questionCount']:break
-                         if file_parts>=config.MAX_PARTS or parts>=12:break
-@@ -160,7 +170,7 @@
-                                 remaining=job['request']['questionCount']-len(accepted)
-                                 count=min(4,remaining+1) if model_only else min(3,remaining)
-                                 used_evidence = history_evidence.union(q['explanation'] for q in accepted)
-                                 try:
--                                    created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=job['request'].get('requirements',''),difficulty=job['request'].get('difficulty',0),used_evidence=used_evidence,allow_rule_generation=not model_only,compact_source=model_only,practice_context=practice_context)
-+                                    created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=requirements,difficulty=job['request'].get('difficulty',0),used_evidence=used_evidence,allow_rule_generation=not model_only,compact_source=model_only,practice_context=practice_context)
-                                 except (Timeout, HTTPError, ValueError, KeyError, TypeError) as exc:
-                                     if not model_only or (isinstance(exc, HTTPError) and exc.response is not None
-@@ -178,6 +188,15 @@
-                                         lambda: checkpoint('自动质量初筛 · 等待本机模型独立复核'))
-                                 else:
-                                     passed,bad=validator.validate_questions(created,part,accepted)
-+                                if model_only:
-+                                    useful=[]
-+                                    for q in passed:
-+                                        issue=study_chat.choice_teaching_issue(q['question'],original_requirements)
-+                                        if issue:
-+                                            bad.append({'question':q,'reasons':[issue],'status':'rejected_or_needs_review'})
-+                                        else:
-+                                            useful.append(q)
-+                                    passed=useful
-                                 for q in passed:
-                                     q.update(sourceFile=source['name'],sourceFileId=ident,sourceHash=source['sha256'],sourceLocation=section['location'],generationModel=q.get('generationModel',config.TEXT_MODEL),visualAssisted=section['visualAssisted'])
-                                     q.update(extraction=section.get('extraction','text'),ocrConfidence=section.get('ocrConfidence'),textOnly=True)

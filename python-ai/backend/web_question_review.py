@@ -58,6 +58,9 @@ def evidence_conflict(stem, quote, option):
 def leaks_answer(stem, option):
     option = unicodedata.normalize('NFKC', option).strip()
     stem = unicodedata.normalize('NFKC', stem)
+    if re.fullmatch(r'[A-Z][A-Z0-9_-]{1,11}', option) and re.search(
+            rf'(?<![A-Za-z0-9_-]){re.escape(option)}(?![A-Za-z0-9_-])', stem, re.I):
+        return True
     named = NAMED_OPTION.fullmatch(option)
     if named:
         option, alias = named.groups()

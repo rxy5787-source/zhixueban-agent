@@ -15,6 +15,7 @@ export type GenerationTask = {
   generatedQuestionCount: number; acceptedQuestionCount: number; requestedQuestionCount: number
   savedQuestionCount: number
   availableQuestions?: Question[]; filteredQuestionCount?: number; created?: number; updated?: number
+  coverage?: { label: string; requested: number; accepted: number; sources: string[]; reason: string }[]
   study?: { kind: Exclude<StudyKind, 'single_choice'>; saved: boolean; hidden: boolean; result: StudyOutput | null } | null
   libraryDeleted?: boolean
   examPractice?: { topic: ExamTopic; label: string; reference: string } | null

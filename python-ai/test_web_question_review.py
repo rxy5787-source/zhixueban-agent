@@ -7,6 +7,12 @@ from backend.practice_variety import PracticePlan, REPEATED, question_angle
 from backend.schemas import JobRequest
 
 
+def test_short_answer_token_is_flagged_only_when_named_in_the_stem():
+    assert review.leaks_answer('在 SQL WHERE 子句中，应使用哪个子句？', 'WHERE')
+    assert not review.leaks_answer('要在分组前筛选原始数据行，应使用哪个子句？', 'WHERE')
+    assert not review.leaks_answer('请说明 SOMEWHERE 字段的用途。', 'WHERE')
+
+
 def candidate():
     return {
         'question': '要筛选分组前的数据行，应使用哪个子句？',

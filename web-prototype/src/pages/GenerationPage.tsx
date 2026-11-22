@@ -94,6 +94,12 @@ export function GenerationPage({taskId,uploadPercent,uploadDetail,submittingExam
     {!taskId && !submittingExam && uploadDetail && <p className="generation-counts" role="status">{uploadDetail}</p>}
     {running && <p className="generation-counts">{phaseSeconds === null ? '' : `当前步骤已用 ${phaseSeconds} 秒 · `}可从「出题任务」返回查看。</p>}
     {task && <p className="generation-counts">{task.acceptedQuestionCount} 道可练习 · 目标 {task.requestedQuestionCount} 道{running ? ` · 已生成 ${task.generatedQuestionCount} 道候选` : ''}</p>}
+    {!!task?.coverage?.length && (task.coverage.length > 1 || task.coverage[0].reason) && <details className="generation-counts">
+      <summary>考点覆盖</summary>
+      <ul>{task.coverage.map((scope, index) => <li key={index}>{scope.label} · {scope.accepted}/{scope.requested}
+        {scope.reason && ` · ${scope.reason}`}
+      </li>)}</ul>
+    </details>}
     {exam && <p className="prototype-note">原创模拟题 · {exam.label} · <a href={exam.reference} target="_blank" rel="noreferrer">考点出处</a></p>}
     {canPractice && <div className="result-actions">
       <button className="primary-button" onClick={()=>onPractice(true)}>{running ? '先练已通过的题' : '开始练习'}<Icon name="arrow" size={18}/></button>
