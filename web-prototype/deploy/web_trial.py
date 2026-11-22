@@ -21,6 +21,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .job_store import Store
+from .model_status import generation_readiness
 from .web_api import WebStore, init_web_tables, request_store_override, routes
 from .worker import Runner
 from .trial_body_limit import RequestBodyLimit
@@ -134,7 +135,7 @@ class TrialQueue(Runner):
 
 
 def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_worker=True,
-               access_code=None, trust_cloudflare_headers=False, local_preview=False):
+               access_code=None, trust_cloudflare_headers=False, local_preview=False, landing_origin=None):
     url = urlsplit(origin)
     secure = url.scheme == 'https'
     if (not url.hostname or url.username is not None or url.path or url.query or url.fragment
@@ -148,6 +149,18 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
 
     if access_code is not None and not 12 <= len(access_code) <= 128:
         raise ValueError('Use a trial access code with 12 to 128 characters')
+    if landing_origin:
+        landing = urlsplit(landing_origin)
+        local_landing = local_preview and landing.scheme == 'http' and landing.hostname in {'127.0.0.1', 'localhost'}
+        if (not landing.hostname or landing.username is not None or landing.path or landing.query or landing.fragment
+                or not (landing.scheme == 'https' or local_landing)):
+            raise ValueError('TRIAL_LANDING_ORIGIN must be an exact HTTPS origin')
+        if secure and not access_code:
+            raise ValueError('An online study landing page requires TRIAL_ACCESS_CODE')
+
+    readiness_lock = threading.Lock()
+    readiness_checked_at = float('-inf')
+    model_available = None
     key = hmac.digest(secret.encode(), access_code.encode(), 'sha256') if access_code else secret.encode()
     probe = hmac.new(key, b'local-health-probe', hashlib.sha256).hexdigest()
     login_attempts = {}
@@ -250,6 +263,23 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
     def health():
         return {'ok': True}
 
+    @app.get('/study-availability')
+    def study_availability(request: Request):
+        nonlocal readiness_checked_at, model_available
+        if not landing_origin or request.headers.get('origin') != landing_origin:
+            raise HTTPException(404)
+        headers = {'Access-Control-Allow-Origin': landing_origin, 'Vary': 'Origin', 'Cache-Control': 'no-store'}
+        if readiness_lock.acquire(blocking=False):
+            try:
+                if time.monotonic() - readiness_checked_at >= 5:
+                    model_available = generation_readiness(timeout=(1, 3))['generationReady']
+                    readiness_checked_at = time.monotonic()
+            finally:
+                readiness_lock.release()
+        else:
+            return JSONResponse({'status': 'checking'}, headers=headers)
+        return JSONResponse({'status': 'ready' if model_available else 'model-unavailable'}, headers=headers)
+
     @app.get('/')
     def index(request: Request):
         ident = existing_space(request)
@@ -282,7 +312,8 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
         with login_lock:
             login_attempts.pop(address, None)
         ident = existing_space(request) or spaces.new(address)
-        return attach_cookie(RedirectResponse('/', status_code=303, headers={'Cache-Control': 'no-store'}), ident)
+        destination = '/#home/study' if landing_origin else '/'
+        return attach_cookie(RedirectResponse(destination, status_code=303, headers={'Cache-Control': 'no-store'}), ident)
 
     @app.get('/favicon.svg')
     def favicon():
@@ -303,4 +334,5 @@ def from_environment():
                       int(os.environ.get('TRIAL_MAX_SPACES', '32')),
                       access_code=os.environ.get('TRIAL_ACCESS_CODE'),
                       trust_cloudflare_headers=os.environ.get('TRIAL_CLOUDFLARE_PROXY') == '1',
-                      local_preview=os.environ.get('TRIAL_LOCAL_PREVIEW') == '1')
+                      local_preview=os.environ.get('TRIAL_LOCAL_PREVIEW') == '1',
+                      landing_origin=os.environ.get('TRIAL_LANDING_ORIGIN'))

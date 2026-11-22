@@ -102,13 +102,15 @@ def follow_up(value: FollowUp):
     }
     job_request.pop('studyKind', None)
     if value.kind in STUDY_TYPES:
+        validate_study_request(value.kind, value.questionCount, value.requirement)
         job_request['studyKind'] = value.kind
     else:
         try:
-            web_api.JobRequest(fileIds=files, libraryName=parent_request['libraryName'], subject='资料学习',
-                               requirements=value.requirement)
+            parsed = web_api.JobRequest(fileIds=files, libraryName=parent_request['libraryName'], subject='资料学习',
+                                        requirements=value.requirement, questionCount=value.questionCount)
+            job_request['difficulty'] = parsed.difficulty
         except ValidationError as exc:
-            raise HTTPException(422, '选择题目前支持四选一单选，请调整要求。') from exc
+            raise HTTPException(422, '；'.join(error['msg'].removeprefix('Value error, ') for error in exc.errors())) from exc
     ident, now = uuid4().hex, time.time()
     with store.db() as db:
         db.execute('BEGIN IMMEDIATE')
@@ -126,6 +128,22 @@ def follow_up(value: FollowUp):
         db.execute('INSERT INTO web_tasks VALUES(?,?)', (ident, library_id))
         db.execute('INSERT INTO web_submissions VALUES(?,?,?)', (request_id, ident, fingerprint))
     return {'taskId': ident, 'status': 'queued'}
+
+
+def validate_study_request(kind, count, requirement):
+    if kind != 'cloze':
+        return
+    from .schemas import requested_difficulty
+    if count > 5:
+        raise HTTPException(422, '填空练习每轮支持 1–5 道，请调整题量。')
+    try:
+        level = requested_difficulty(requirement)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    if level:
+        raise HTTPException(422, '填空练习暂不支持指定难度。请去掉难度要求，或选择四选一单选题。')
+    if re.search(r'单选|多选|选择题|判断题|简答题', requirement):
+        raise HTTPException(422, '同一轮只支持一种题型，请分开发送。')
 
 
 @router.post('/api/study-turns/{ident}/save')
@@ -814,7 +832,9 @@ def run_job_process(root, job):
                 review_learning_content(store, job, output, anchors)
                 result.update(content=output.content, anchors=anchors)
         if kind == 'cloze':
-            count = min(5, job['request']['questionCount'])
+            count = job['request']['questionCount']
+            if len(anchors) < count:
+                raise ValueError(f'资料中只有 {len(anchors)} 个可核对的填空考点，本轮目标为 {count} 个。请减少题量或补充资料。')
             result['items'] = []
             for index, anchor in enumerate(anchors[:count], 1):
                 before, after = anchor['evidence'].split(anchor['point'], 1)

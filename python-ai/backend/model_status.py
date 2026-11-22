@@ -3,11 +3,11 @@ import requests
 from . import config
 
 
-def generation_readiness():
+def generation_readiness(*, timeout=(3, 20)):
     models = []
     try:
         # Ollama can be responsive while model discovery is still reading local metadata.
-        response = requests.get(config.OLLAMA_URL.rsplit('/api/', 1)[0] + '/api/tags', timeout=(3, 20))
+        response = requests.get(config.OLLAMA_URL.rsplit('/api/', 1)[0] + '/api/tags', timeout=timeout)
         response.raise_for_status()
         models = [item['name'] for item in response.json()['models']]
     except (requests.RequestException, ValueError, KeyError, TypeError):

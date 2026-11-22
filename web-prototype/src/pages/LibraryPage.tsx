@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { onlineTrial } from '../deployment'
+import { onlineTrial, staticDemo } from '../deployment'
 import { Icon } from '../components/Icon'
 import type { DocumentKind, Library, LibraryDocument } from '../data/demo'
 
@@ -19,7 +19,7 @@ export function BookshelfPage({ libraries, deletedCount, loading, error, onRetry
   }
   return <div className="bookshelf-page page-enter">
     <header className="editorial-heading">
-      <div><h1>知识库</h1><p>按主题整理资料、知识点和练习。</p></div>
+      <div><h1>知识库</h1><p>{staticDemo ? '以下是示例主题。在线知识库尚未开放。' : '按主题整理资料、知识点和练习。'}</p></div>
       <button className="shelf-create" aria-label="新建知识库" onClick={onCreate}><Icon name="plus" size={18}/>新建</button>
     </header>
     <div className="shelf-tools">
@@ -47,7 +47,7 @@ export function LibraryDetailPage({ library, onBack, onDelete, onRename, onRemov
   const documents = library.documents.filter(document => filter === 'all' || document.kind === filter)
   return <div className="library-detail page-enter">
     <div className="library-actions"><button className="back-link" onClick={onBack}><Icon name="back" size={18}/>我的书架</button><div><button className="archive-link" onClick={onRename}>改名</button><button className="archive-link remove-link" onClick={onDelete}>删除知识库</button></div></div>
-    <div className="library-heading"><span className={`mini-cover cover-${library.color}`}>{library.mark}</span><div><h1>{library.title}</h1><p>{library.subtitle}</p><span>{onlineTrial ? '主题知识库 · 试用存储' : '主题知识库 · 本机存储'}</span></div></div>
+    <div className="library-heading"><span className={`mini-cover cover-${library.color}`}>{library.mark}</span><div><h1>{library.title}</h1><p>{library.subtitle}</p><span>{staticDemo ? '示例主题' : onlineTrial ? '主题知识库 · 试用存储' : '主题知识库 · 本机存储'}</span></div></div>
     <button className="compose-in-library" onClick={onCompose}><span><Icon name="plus" size={19}/>添加资料并出题</span><Icon name="arrow" size={17}/></button>
     <div className="document-filters" aria-label="知识库内容分类">{FILTERS.map(item => <button key={item.id} aria-pressed={filter === item.id} onClick={() => setFilter(item.id)}>{item.title}</button>)}</div>
     {filter === 'knowledge' && library.points.length > 0 && <div className="point-chips">{library.points.map(point => <span key={point}>{point}</span>)}</div>}
@@ -56,7 +56,7 @@ export function LibraryDetailPage({ library, onBack, onDelete, onRename, onRemov
       <button className="document-row" onClick={() => onDocument(document)}><FileBadge format={document.format}/><span><strong>{document.title}</strong><small>{document.description}</small></span><Icon name={document.taskId ? 'play' : 'chevron'} size={15}/></button>
       {managing && (document.taskId || document.kind==='source') && <button className="archive-link remove-link" aria-label={`移除 ${document.title}`} onClick={() => onRemoveItem(document)}>移除</button>}
     </div>)}</div>
-    {documents.length === 0 && !(filter === 'knowledge' && library.points.length) && <div className="empty-state"><Icon name="folder" size={28}/><h2>{library.documents.length ? '这里还没有这类内容' : '还没有学习资料'}</h2><p>添加学习资料，再将生成内容归档到这里。</p><button className="secondary-button" onClick={onCompose}>去添加资料</button></div>}
+    {documents.length === 0 && !(filter === 'knowledge' && library.points.length) && <div className="empty-state"><Icon name="folder" size={28}/><h2>{library.documents.length ? '这里还没有这类内容' : '还没有学习资料'}</h2><p>{staticDemo ? '在线服务尚未开放。' : '添加学习资料，再将生成内容归档到这里。'}</p><button className="secondary-button" onClick={onCompose}>去添加资料</button></div>}
     <div className="library-insights"><button onClick={onRecords}><Icon name="clock" size={19}/><span>练习记录</span><Icon name="chevron" size={14}/></button><button onClick={onAnalysis}><Icon name="reports" size={19}/><span>学习分析</span><Icon name="chevron" size={14}/></button></div>
   </div>
 }

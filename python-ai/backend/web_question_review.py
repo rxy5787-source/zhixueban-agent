@@ -33,6 +33,26 @@ GENERIC_ANSWER = re.compile(r'^([\w\u4e00-\u9fff]{2,8})(?:方式|方法|类型|�
 NAMED_OPTION = re.compile(r'(.+?)\s*\(([A-Z][A-Z0-9-]{1,9})\)$')
 SYMBOL_OPTION = re.compile(r'[A-Za-z][A-Za-z0-9_-]+(?:\s+[A-Za-z0-9_-]+){0,3}')
 UPPER_TOKEN = re.compile(r'\b[A-Z][A-Z0-9_-]+\b')
+SQL_CONTEXT = re.compile(r'(?<![A-Za-z])(?:SQL|WHERE|HAVING)(?![A-Za-z])', re.I)
+SQL_CONNECTOR = re.compile(r'(?<![A-Za-z])(?:AND|OR)(?![A-Za-z])', re.I)
+SQL_LITERAL_VALUE = re.compile(r'(?:字段|列)[^，。？?]{0,12}(?:等于|为|是|=)\s*["\'“‘「]')
+
+
+def evidence_key(text):
+    return re.sub(r'[\s。；;]+', '', unicodedata.normalize('NFKC', text).casefold())
+
+
+def evidence_conflict(stem, quote, option):
+    if not stem.rstrip().endswith(('？', '?')):
+        return '题干必须提出完整问题并以问号结尾，不能把资料陈述当作题目'
+    if SQL_CONTEXT.search(stem) and SQL_CONTEXT.search(quote):
+        asked = {token.upper() for token in SQL_CONNECTOR.findall(stem)}
+        supported = {token.upper() for token in SQL_CONNECTOR.findall(quote)}
+        if len(asked) == len(supported) == 1 and asked != supported:
+            return '题干与原文引用的 SQL 逻辑运算符不同'
+        if SQL_LITERAL_VALUE.search(stem) and re.fullmatch(r'IS\s+(?:NOT\s+)?NULL', option.strip(), re.I):
+            return '题干要求匹配具体字段值，空值判断不能证明值相等'
+    return ''
 
 
 def leaks_answer(stem, option):
@@ -90,7 +110,8 @@ def request_reviews(candidates, units):
     prompt = (
         '独立检查每题的四个选项。只有本题 evidence 支持唯一答案才用 ok。'
         '其他资料与其他题的引文可以用来发现冲突，不能代替本题 evidence。'
-        '多解用 ambiguous，证据不足用 unsupported，题意或选项无法判定用 vague。'
+        '核对题干与 evidence 的条件、运算符、限定词和对象是否一致。'
+        '多解用 ambiguous，证据不足或条件不同用 unsupported，陈述句或题意不明用 vague。'
         '仅当题干引用了缺失的图或表且必须看图表才能作答时用 visual。'
         '有唯一答案时返回正确字母和 ok；拒绝时 answer 必须是 X。'
         '每题返回一次 id、answer、issue，只输出 JSON。\n'
@@ -122,7 +143,7 @@ def validate_questions(questions, source, previous, practice_plan=None, on_model
     literals = {}
     pending = {}
     evidence = {}
-    previous_evidence = {q['evidenceQuote'] for q in previous if 'evidenceQuote' in q}
+    previous_evidence = {evidence_key(q['evidenceQuote']) for q in previous if 'evidenceQuote' in q}
     for ident, q in enumerate(questions, 1):
         reasons = errors[ident] = validator.check_structure(q)
         if reasons:
@@ -137,9 +158,11 @@ def validate_questions(questions, source, previous, practice_plan=None, on_model
             reasons.append('正确选项只是复述题干中的类别名称，缺少可区分的考点')
         elif citation_issue:
             reasons.append(citation_issue)
+        elif issue := evidence_conflict(q['question'], quote, q['options'][q['answer']]):
+            reasons.append(issue)
         elif issue := standalone_issue(q['question'], quote, list(q['options'].values())):
             reasons.append(issue)
-        elif quote in previous_evidence:
+        elif evidence_key(quote) in previous_evidence:
             reasons.append('与已保留题目重复考查同一证据或题意')
         elif validator.find_near_duplicate(q['question'], previous):
             reasons.append('与已保留的题目文字高度相似')
@@ -200,13 +223,13 @@ def validate_questions(questions, source, previous, practice_plan=None, on_model
             else:
                 quote = evidence[ident]
         if not reasons:
-            if quote in evidence_used or validator.find_near_duplicate(q['question'], passed):
+            if evidence_key(quote) in evidence_used or validator.find_near_duplicate(q['question'], passed):
                 reasons.append('与已保留题目重复考查同一证据或题意')
         if reasons:
             rejected.append({'indexInPart': ident, 'question': q if isinstance(q, dict) else repr(q),
                              'reasons': reasons, 'status': 'rejected_or_needs_review'})
             continue
-        evidence_used.add(quote)
+        evidence_used.add(evidence_key(quote))
         passed.append(dict(q, explanation=quote, evidenceQuote=quote, reviewStatus='auto_prechecked',
                            reviewMethod=method, reviewModel=validator.REVIEW_MODEL if method == 'batch_indexed_v1' else method,
                            explanationModel='indexed_source_v1'))

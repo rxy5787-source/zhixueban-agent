@@ -19,9 +19,9 @@ import type { SelectedFile } from './pages/HomePage'
 import { continueStudy, readStudyThread, storeStudyThread, studyIntent } from './api/study'
 import type { StudyTurn } from './api/study'
 import { BookshelfPage, FileBadge, LibraryDetailPage } from './pages/LibraryPage'
+import { readRoute, STUDY_HASH } from './routes'
+import type { Route } from './routes'
 
-type Route = { destination: Destination; libraryId?: string; taskId?: string; practicing?: boolean; study?: boolean }
-const STUDY_HASH = '#home/study'
 const UPLOAD_DRAFT_KEY = 'zhixue-upload-draft'
 function uploadDraft(): { libraryId: string; requirements: string } | null {
   try {
@@ -30,7 +30,7 @@ function uploadDraft(): { libraryId: string; requirements: string } | null {
   } catch { /* A disabled browser store still allows an in-page upload. */ }
   return null
 }
-const BASE_LIBRARIES: Library[] = LIBRARY_SEEDS.map(library=>({...library,documents:[],points:[],records:[],question:{stem:'',options:[]}}))
+const BASE_LIBRARIES = LIBRARY_SEEDS
 const TASK_KEY='zhixue-last-generation-task'
 const TASK_STATUS: Record<string,string> = { queued:'排队中', running:'生成中', succeeded:'已完成', partial:'部分完成', failed:'未完成', interrupted:'服务中断', cancelled:'已取消' }
 const ITEM_LABEL = {source:'原始资料',set:'题目集',question:'单题',task:'任务记录',study:'学习内容'}
@@ -48,14 +48,6 @@ type Panel = { type: 'demo' | 'target' | 'create' | 'overview' | 'settings' | 't
   | { type: 'document'; libraryId: string; documentId: string }
   | { type: 'records' | 'analysis'; libraryId?: string }
   | null
-function readRoute(): Route {
-  const [path, id, mode] = window.location.hash.slice(1).split('/')
-  if (path === 'libraries') { try { return { destination: 'libraries', libraryId: id ? decodeURIComponent(id) : undefined } } catch { return { destination: 'libraries' } } }
-  if (path === 'home' && (id === 'study' || id === 'exam')) return { destination: 'home', study: true }
-  if (path === 'home' && id && /^[a-f0-9]{32}$/.test(id)) return {destination:'home',taskId:id,practicing:mode==='practice'}
-  if (path === 'profile' || path === 'reports') return { destination: 'profile' }
-  return { destination: 'home' }
-}
 
 export function App() {
   const [route, setRoute] = useState<Route>(readRoute)

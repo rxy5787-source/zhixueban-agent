@@ -9,6 +9,8 @@
     "dev": "vite",
     "check": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
+    "build:demo": "tsc --noEmit && vite build --mode static-demo --outDir dist-pages",
+    "build:offline": "tsc --noEmit && vite build --mode offline-study --outDir dist-offline && node scripts/build-offline-worker.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

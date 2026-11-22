@@ -58,7 +58,7 @@
      return {'libraries':result,'deletedLibraries':deleted,'removedItems':removed}
  
  @routes.get('/api/generation-tasks')
-@@ -301,13 +309,18 @@
+@@ -301,13 +309,19 @@
  def create_task(files: list[UploadFile]=File(...),requirements: str=Form(''),libraryId: str=Form(...),
                  libraryName: str=Form(...),questionCount: int=Form(3,ge=1,le=12),questionType: str=Form('single_choice'),
                  clientRequestId: str=Form('',pattern=r'^(?:[0-9a-f]{32})?$')):
@@ -68,6 +68,7 @@
 +        raise HTTPException(422,'当前支持选择题、记忆口诀、填空和资料问答。')
 +    if is_study and not 1 <= len(requirements.strip()) <= 1200:
 +        raise HTTPException(422,'请填写学习要求，最多 1200 字。')
++    study_chat.validate_study_request(questionType, questionCount, requirements)
      if not 1<=len(files)<=config.MAX_FILES: raise HTTPException(422,'每次选择1–5份资料')
      check_library_id(libraryId)
      with request_store().db() as db:require_active_library(db,libraryId)
@@ -135,15 +136,15 @@
                      for part in source_parts:
                          if self.cancelled(job) or len(accepted)>=job['request']['questionCount']:break
                          if file_parts>=config.MAX_PARTS or parts>=12:break
-@@ -161,7 +171,7 @@
+@@ -160,7 +170,7 @@
                                  remaining=job['request']['questionCount']-len(accepted)
                                  count=min(4,remaining+1) if model_only else min(3,remaining)
                                  used_evidence = history_evidence.union(q['explanation'] for q in accepted)
--                                created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=job['request'].get('requirements',''),difficulty=job['request'].get('difficulty',0),used_evidence=used_evidence,allow_rule_generation=not model_only,compact_source=model_only,practice_context=practice_context)
-+                                created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=requirements,difficulty=job['request'].get('difficulty',0),used_evidence=used_evidence,allow_rule_generation=not model_only,compact_source=model_only,practice_context=practice_context)
-                                 if not created:rejected.append({'sourceFile':source['name'],'reasons':[EXHAUSTED if practice_context else '本段没有新的、证据充分的可用题目']})
-                                 for q in created:
-                                     if isinstance(q,dict):
+                                 try:
+-                                    created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=job['request'].get('requirements',''),difficulty=job['request'].get('difficulty',0),used_evidence=used_evidence,allow_rule_generation=not model_only,compact_source=model_only,practice_context=practice_context)
++                                    created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=requirements,difficulty=job['request'].get('difficulty',0),used_evidence=used_evidence,allow_rule_generation=not model_only,compact_source=model_only,practice_context=practice_context)
+                                 except (Timeout, HTTPError, ValueError, KeyError, TypeError) as exc:
+                                     if not model_only or (isinstance(exc, HTTPError) and exc.response is not None
 @@ -178,6 +188,15 @@
                                          lambda: checkpoint('自动质量初筛 · 等待本机模型独立复核'))
                                  else:

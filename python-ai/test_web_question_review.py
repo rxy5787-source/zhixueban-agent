@@ -1,7 +1,10 @@
 from unittest.mock import Mock
+import pytest
+from pydantic import ValidationError
 
 from backend import web_question_review as review
 from backend.practice_variety import PracticePlan, REPEATED, question_angle
+from backend.schemas import JobRequest
 
 
 def candidate():
@@ -104,3 +107,56 @@ def test_ambiguous_literal_citations_do_not_borrow_another_sources_evidence():
     assert '无法确定' in review.check_citation(question, [
         question['explanation'], 'A DNS cache reuses past results.', 'The DNS cache can expire.',
     ])[1]
+
+
+def test_exhausted_source_does_not_call_the_model(monkeypatch):
+    import generate_from_file as generator
+
+    evidence = candidate()['explanation']
+    post = Mock()
+    monkeypatch.setattr(generator.requests, 'post', post)
+    assert generator.generate_questions(
+        evidence, compact_source=True, used_evidence={evidence},
+        allow_rule_generation=False, raw_candidates=True,
+    ) == []
+    post.assert_not_called()
+
+
+@pytest.mark.parametrize(('stem', 'evidence', 'option'), [
+    ('在 WHERE 子句中，若使用 OR 连接两个条件，哪一行会被保留？',
+     'WHERE 中用 AND 连接两个条件时，只有同时满足两个条件才会保留。', '仅同时满足'),
+    ('DNS 客户端通常用 UDP 发起查询。收到截断响应后应改用 TCP 重试。',
+     'DNS 客户端通常用 UDP 发起查询。', 'UDP'),
+    ('在 WHERE 子句中，若需筛选出备注字段为‘有效’的记录，应使用哪个条件？',
+     '在 WHERE 中筛选有值的备注字段时，要使用 IS NOT NULL。', 'IS NOT NULL'),
+])
+def test_source_conflicts_do_not_reach_the_model_reviewer(stem, evidence, option, monkeypatch):
+    question = candidate()
+    question.update(question=stem, explanation=evidence)
+    question['options']['A'] = option
+    reviewer = Mock()
+    monkeypatch.setattr(review, 'request_reviews', reviewer)
+    passed, rejected = review.validate_questions([question], evidence, [])
+    assert not passed and rejected
+    reviewer.assert_not_called()
+
+
+def test_citation_duplicates_ignore_whitespace_case_and_terminal_punctuation(monkeypatch):
+    question = candidate()
+    reviewer = Mock()
+    monkeypatch.setattr(review, 'request_reviews', reviewer)
+    passed, rejected = review.validate_questions([question], question['explanation'], [
+        {'question': '不相似的题干', 'evidenceQuote': 'where 按条件筛选原始 数据行'},
+    ])
+    assert not passed and '重复考查' in rejected[0]['reasons'][0]
+    reviewer.assert_not_called()
+
+
+def test_requested_difficulty_is_normalized_and_conflicts_are_rejected():
+    fields = {'fileIds': ['test'], 'libraryName': 'SQL', 'subject': '数据库', 'questionCount': 2}
+    assert JobRequest(**fields, requirements='生成中等难度的2道单选题').difficulty == 2
+    assert JobRequest(**fields, requirements='出2道选择题，难度：进阶').difficulty == 3
+    with pytest.raises(ValidationError, match='只能指定一个难度'):
+        JobRequest(**fields, requirements='生成简单题和困难题')
+    with pytest.raises(ValidationError, match='与指定难度不一致'):
+        JobRequest(**fields, requirements='难度为中等', difficulty=3)

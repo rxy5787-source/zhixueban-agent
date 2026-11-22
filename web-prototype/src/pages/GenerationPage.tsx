@@ -100,7 +100,9 @@ export function GenerationPage({taskId,uploadPercent,uploadDetail,submittingExam
       {success && !saved && <button className="secondary-button" disabled={saving} onClick={()=>void save()}>{saving ? '保存中…' : '保存到知识库'}</button>}
       {saved && task && <button className="secondary-button" onClick={()=>onLibrary(task.libraryId)}>已归档到「{task.libraryName}」<Icon name="chevron" size={14}/></button>}
     </div>}
-    {task?.status==='partial' && canPractice && <p className="generation-counts">本次只放行达到初筛标准的题目。</p>}
+    {task?.status==='partial' && canPractice && <p className="generation-counts">{task.acceptedQuestionCount < task.requestedQuestionCount
+      ? '本次未达到目标题量。可以先练通过质检的题，或补充资料后重新提交。'
+      : '目标题量已达到，部分资料处理失败。'}</p>}
     {!!task?.filteredQuestionCount && <p className="prototype-note">历史结果中有 {task.filteredQuestionCount} 道题缺少独立题意或可验证的条件，已从练习中排除。</p>}
     {!!task?.removedQuestionCount && <p className="prototype-note">{task.removedQuestionCount} 道题已移入回收站。</p>}
     {(error || task?.error) && <div className="generation-error" role="alert"><strong>处理提示</strong><p>{error || task?.error}</p>{error && <button className="secondary-button" onClick={()=>setRetryPoll(value=>value+1)}>重新查询</button>}</div>}

@@ -3,13 +3,13 @@ import multiprocessing
 import threading
 import time
 from pathlib import Path
-from requests import Timeout
+from requests import HTTPError, Timeout
 from . import config
 from .content_exporter import result_bundle
 from .file_storage import validate_file
 from .job_store import Store
 from .knowledge_extractor import derive_points
-from .practice_quality import looks_like_ocr_table, split_practice_text, usable_practice_text
+from .practice_quality import looks_like_ocr_table, source_units, split_practice_text, usable_practice_text
 from .practice_variety import EXHAUSTED, REPEATED, PracticePlan
 from .schemas import Point
 
@@ -93,7 +93,7 @@ class Runner:
         practice_plan = self.store.practice_plan(job) if model_only and hasattr(self.store, 'practice_plan') else PracticePlan()
         practice_context = practice_plan.instructions()
         history_evidence = practice_plan.evidence
-        retry_budget=1
+        retry_budget=2
         def checkpoint(stage):
             self.store.update(job['id'],'running',stage,result_bundle(self.store.service_id,job,accepted,rejected,reports))
         for ident in job['request']['fileIds']:
@@ -148,20 +148,29 @@ class Runner:
                                 job['request']['points']=list({p['name']:p for p in job['request']['points']+points}.values())
                                 self.store.update_request(job['id'],job['request'])
                             feedback=None
-                            bad=[]
                             for attempt in range(2):
                                 if self.cancelled(job) or len(accepted)>=job['request']['questionCount']:break
                                 if attempt:
                                     if model_only:
-                                        if accepted or not bad or not retry_budget:break
+                                        if not retry_budget or not feedback:break
                                         retry_budget-=1
-                                    checkpoint('根据质检原因重新生成')
+                                    checkpoint(f'重新生成 · 还缺 {job["request"]["questionCount"] - len(accepted)} 道')
                                 stage='AI生成题目（同步提取知识点）' if model_only and auto_points else 'AI生成题目'
                                 checkpoint(f'{stage} · 等待本机模型 · {source["name"]} 第{file_parts}段')
                                 remaining=job['request']['questionCount']-len(accepted)
                                 count=min(4,remaining+1) if model_only else min(3,remaining)
                                 used_evidence = history_evidence.union(q['explanation'] for q in accepted)
-                                created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=job['request'].get('requirements',''),difficulty=job['request'].get('difficulty',0),used_evidence=used_evidence,allow_rule_generation=not model_only,compact_source=model_only,practice_context=practice_context)
+                                try:
+                                    created=generator.generate_questions(part,question_count=count,knowledge_points=points,timeout=config.MODEL_TIMEOUT,raw_candidates=True,feedback=feedback,requirements=job['request'].get('requirements',''),difficulty=job['request'].get('difficulty',0),used_evidence=used_evidence,allow_rule_generation=not model_only,compact_source=model_only,practice_context=practice_context)
+                                except (Timeout, HTTPError, ValueError, KeyError, TypeError) as exc:
+                                    if not model_only or (isinstance(exc, HTTPError) and exc.response is not None
+                                            and exc.response.status_code < 500 and exc.response.status_code not in (408, 429)):
+                                        raise
+                                    reason = '等待本机模型响应超时' if isinstance(exc, Timeout) else '模型响应失败或结构无效'
+                                    rejected.append({'sourceFile':source['name'],'sourceLocation':section['location'],
+                                                     'reasons':[reason],'generationAttempt':attempt+1})
+                                    feedback = reason + '。从可用原文重新生成有效的 JSON 四选一题。'
+                                    continue
                                 if not created:rejected.append({'sourceFile':source['name'],'reasons':[EXHAUSTED if practice_context else '本段没有新的、证据充分的可用题目']})
                                 for q in created:
                                     if isinstance(q,dict):
@@ -190,7 +199,9 @@ class Runner:
                                 for row in bad:row.update(sourceFile=source['name'],sourceLocation=section['location'],generationAttempt=attempt+1)
                                 rejected.extend(bad)
                                 if passed:checkpoint(f'初筛通过 · 已有 {len(accepted)} 道题可练习')
-                                feedback=json.dumps([{'reasons':row['reasons']} for row in bad[:3]],ensure_ascii=False)[:1000]
+                                feedback=json.dumps([{'reasons':row['reasons']} for row in bad[:3]],ensure_ascii=False)[:1000] if bad else (
+                                    '合格题数不足。只用尚未考查且足以支持唯一答案的原文。'
+                                    if model_only and any(unit not in used_evidence for unit in source_units(part)) else None)
                                 if section.get('requiresVisual',False) or section['visualAssisted']:break
                         except Timeout:
                             rejected.append({'sourceFile':source['name'],'sourceLocation':section['location'],

@@ -6,7 +6,7 @@ type GenerationRequest =
   | { error: string }
 
 function questionCount(text: string, fallback: number) {
-  const quantities = [...text.matchAll(/(?:(共(?:计)?|合计|总数(?:为)?)|生成|出|给我|来|做|练|^)\s*([+-]?\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万]+)\s*(?:道|题)/g)]
+  const quantities = [...text.matchAll(/(?:(共(?:计)?|合计|总数(?:为)?)|生成|出|给我|来|做|练|^)\s*(?:(?:入门|基础|简单|中等|适中|普通|提高|进阶|困难|较难)(?:难度)?(?:的)?\s*)?([+-]?\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万]+)\s*(?:道|题)/g)]
   const count = (quantities.find(match => match[1]) ?? quantities[0])?.[2]
   if (!count) return fallback
   if (/\d/.test(count)) return Number(count)
