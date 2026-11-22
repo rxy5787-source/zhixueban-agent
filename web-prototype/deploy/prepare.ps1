@@ -1,5 +1,5 @@
 param(
-    [string]$PythonProject = 'E:\GraduationProject\AdaptiveQuestionAI',
+    [string]$PythonProject = (Join-Path $PSScriptRoot '../../python-ai'),
     [string]$OutputZip = (Join-Path $PSScriptRoot '..\..\artifacts\zhixueban-cloud-trial.zip')
 )
 
@@ -34,7 +34,7 @@ try {
     foreach ($name in 'requirements.txt', 'generate_from_file.py', 'multimodal_reader.py', 'automatic_question_validator.py') {
         Copy-Item -LiteralPath (Join-Path $pythonRoot $name) -Destination (Join-Path $stage 'server')
     }
-    $backendFiles = '__init__.py', 'config.py', 'content_exporter.py', 'exam_practice.py', 'file_storage.py',
+    $backendFiles = '__init__.py', 'agent_api.py', 'config.py', 'content_exporter.py', 'exam_practice.py', 'file_storage.py',
         'job_store.py', 'knowledge_extractor.py', 'literal_evidence.py', 'model_status.py', 'practice_quality.py', 'practice_variety.py',
         'schemas.py', 'web_api.py', 'web_content.py', 'web_practice.py', 'web_question_review.py', 'worker.py'
     foreach ($name in $backendFiles) {
