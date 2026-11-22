@@ -1,6 +1,6 @@
 # 知学伴 Zhixueban
 
-知学伴从学习资料生成有原文依据的口诀和练习，并根据作答记录更新知识点掌握情况。这个仓库包含 Android 客户端、Web 原型、Python 生成服务和独立的账号服务。
+知学伴面向有学习需求的用户，从课程资料、读书笔记和其他学习材料生成有原文依据的解释、口诀和练习，并根据作答记录更新知识点掌握情况。
 
 ## 从这里开始
 
@@ -25,7 +25,7 @@
 
 每个 Issue 记录目标、验收条件和相关 PR。查看 PR 的 **Files changed** 回顾代码，查看 **Checks** 核对自动测试。改动合入后，在 Issue 留下提交和验收结果，再关闭任务。
 
-ZH-02 的 [PR #1](https://github.com/rxy5787-source/zhixueban-agent/pull/1) 已有 CI 结果。ZH-03 的 [PR #12](https://github.com/rxy5787-source/zhixueban-agent/pull/12) 以 ZH-02 分支为目标，便于单独查看任务恢复的改动。接下来按顺序处理这两个 PR，再进入 [ZH-04 验证学习空间隔离](https://github.com/rxy5787-source/zhixueban-agent/issues/5)。
+当前优先验证和修复 Web 学习闭环，覆盖对话、上传、真实模型出题、答题、知识库和针对薄弱点的练习。Android UI 适配和真机测试暂缓。[知学伴 Web 端功能测试报告](docs/WEB_FUNCTIONAL_TEST_REPORT.md)
 
 ## Windows 本地演示
 

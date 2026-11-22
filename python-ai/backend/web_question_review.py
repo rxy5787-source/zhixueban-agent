@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 import automatic_question_validator as validator
 from .literal_evidence import review_quantity
 from .practice_quality import source_units, standalone_issue
+from .practice_variety import REPEATED
 
 
 class Review(BaseModel):
@@ -30,11 +31,36 @@ ISSUES = {
 NAMED_ENTRY = re.compile(r'^([^：:，。；;]{2,45})[：:]')
 GENERIC_ANSWER = re.compile(r'^([\w\u4e00-\u9fff]{2,8})(?:方式|方法|类型|类别)$')
 NAMED_OPTION = re.compile(r'(.+?)\s*\(([A-Z][A-Z0-9-]{1,9})\)$')
+SYMBOL_OPTION = re.compile(r'[A-Za-z][A-Za-z0-9_-]+(?:\s+[A-Za-z0-9_-]+){0,3}')
+UPPER_TOKEN = re.compile(r'\b[A-Z][A-Z0-9_-]+\b')
+SQL_CONTEXT = re.compile(r'(?<![A-Za-z])(?:SQL|WHERE|HAVING)(?![A-Za-z])', re.I)
+SQL_CONNECTOR = re.compile(r'(?<![A-Za-z])(?:AND|OR)(?![A-Za-z])', re.I)
+SQL_LITERAL_VALUE = re.compile(r'(?:字段|列)[^，。？?]{0,12}(?:等于|为|是|=)\s*["\'“‘「]')
+
+
+def evidence_key(text):
+    return re.sub(r'[\s。；;]+', '', unicodedata.normalize('NFKC', text).casefold())
+
+
+def evidence_conflict(stem, quote, option):
+    if not stem.rstrip().endswith(('？', '?')):
+        return '题干必须提出完整问题并以问号结尾，不能把资料陈述当作题目'
+    if SQL_CONTEXT.search(stem) and SQL_CONTEXT.search(quote):
+        asked = {token.upper() for token in SQL_CONNECTOR.findall(stem)}
+        supported = {token.upper() for token in SQL_CONNECTOR.findall(quote)}
+        if len(asked) == len(supported) == 1 and asked != supported:
+            return '题干与原文引用的 SQL 逻辑运算符不同'
+        if SQL_LITERAL_VALUE.search(stem) and re.fullmatch(r'IS\s+(?:NOT\s+)?NULL', option.strip(), re.I):
+            return '题干要求匹配具体字段值，空值判断不能证明值相等'
+    return ''
 
 
 def leaks_answer(stem, option):
     option = unicodedata.normalize('NFKC', option).strip()
     stem = unicodedata.normalize('NFKC', stem)
+    if re.fullmatch(r'[A-Z][A-Z0-9_-]{1,11}', option) and re.search(
+            rf'(?<![A-Za-z0-9_-]){re.escape(option)}(?![A-Za-z0-9_-])', stem, re.I):
+        return True
     named = NAMED_OPTION.fullmatch(option)
     if named:
         option, alias = named.groups()
@@ -56,15 +82,45 @@ def resolve_evidence(question, units):
     return matches[0] if len(matches) == 1 else proposed
 
 
+def literal_citations(option, units):
+    option = unicodedata.normalize('NFKC', option).strip()
+    if not SYMBOL_OPTION.fullmatch(option) or not UPPER_TOKEN.search(option):
+        return []
+    plural = '' if option.isupper() else '(?:s|es)?'
+    literal = re.compile(r'(?<![a-z0-9_-])' + re.escape(option) + plural + r'(?![a-z0-9_-])', re.IGNORECASE | re.ASCII)
+    return [unit for unit in units if literal.search(unit)]
+
+
+def check_citation(question, units):
+    quote = resolve_evidence(question, units)
+    if not quote:
+        return '', '出题时缺少可定位的完整原文依据'
+    matches = literal_citations(question['options'][question['answer']], units)
+    if len(matches) == 1:
+        # Repair index drift only. The independent reviewer still solves using this exact sentence.
+        return matches[0], ''
+    if matches and quote not in matches:
+        return '', '所选原文不含答案术语，其他资料又有多处匹配，无法确定正确引文'
+    return quote, ''
+
+
 def request_reviews(candidates, units):
     # Independently answer using the cited literal evidence, without the proposed answer.
     tasks = [{'id': ident, 'question': q['question'], 'options': q['options'], 'evidence': q['explanation']}
              for ident, q in candidates.items()]
-    source = '\n'.join(units)
-    prompt = f'''逐题独立解答，检查全部四项。仅当本题 evidence 直接支持唯一答案时，返回题目 id、正确字母 answer、issue 为 ok。若两项都描述了被考对象的属性或作用，按歧义处理。不可用另一句话替代本题 evidence，也不可用常识填补条件。有歧义用 ambiguous，依据不足用 unsupported，需图表用 visual，题意不清或选项不可比用 vague，这四种情况 answer 用 X。每题返回一次，只输出JSON。
-资料：
-{source}
-待答题目：{json.dumps(tasks, ensure_ascii=False, separators=(',', ':'))}'''
+    cited = {task['evidence'] for task in tasks}
+    other_source = '\n'.join(unit for unit in units if unit not in cited)
+    prompt = (
+        '独立检查每题的四个选项。只有本题 evidence 支持唯一答案才用 ok。'
+        '其他资料与其他题的引文可以用来发现冲突，不能代替本题 evidence。'
+        '多解用 ambiguous，证据不足用 unsupported，题意或选项无法判定用 vague。'
+        '仅当题干引用了缺失的图或表且必须看图表才能作答时用 visual。'
+        '有唯一答案时返回正确字母和 ok；拒绝时 answer 必须是 X。'
+        '每题返回一次 id、answer、issue，只输出 JSON。\n'
+    )
+    if other_source:
+        prompt += f'其他资料：\n{other_source}\n'
+    prompt += '待答题目：' + json.dumps(tasks, ensure_ascii=False, separators=(',', ':'))
     schema = {'type': 'object', 'properties': {'reviews': {
         'type': 'array', 'minItems': len(tasks), 'maxItems': len(tasks),
         'items': Review.model_json_schema()}}, 'required': ['reviews'], 'additionalProperties': False}
@@ -83,12 +139,13 @@ def request_reviews(candidates, units):
     return rows
 
 
-def validate_questions(questions, source, previous):
+def validate_questions(questions, source, previous, practice_plan=None, on_model_review=None):
     units = source_units(source)
     errors = {}
     literals = {}
     pending = {}
     evidence = {}
+    previous_evidence = {evidence_key(q['evidenceQuote']) for q in previous if 'evidenceQuote' in q}
     for ident, q in enumerate(questions, 1):
         reasons = errors[ident] = validator.check_structure(q)
         if reasons:
@@ -96,14 +153,23 @@ def validate_questions(questions, source, previous):
         answer = validator.normalize(q['options'][q['answer']])
         stem = validator.normalize(q['question'])
         generic = GENERIC_ANSWER.fullmatch(answer)
+        quote, citation_issue = check_citation(q, units)
         if leaks_answer(q['question'], q['options'][q['answer']]):
             reasons.append('题干直接包含正确选项，泄露答案')
         elif generic and generic[1] in stem and re.search(r'什么方式|哪种方式|方式是什么|属于哪(?:种|类)', stem):
             reasons.append('正确选项只是复述题干中的类别名称，缺少可区分的考点')
-        elif not (quote := resolve_evidence(q, units)):
-            reasons.append('出题时缺少可定位的完整原文依据')
+        elif citation_issue:
+            reasons.append(citation_issue)
+        elif issue := evidence_conflict(q['question'], quote, q['options'][q['answer']]):
+            reasons.append(issue)
+        elif issue := standalone_issue(q['question'], quote, list(q['options'].values())):
+            reasons.append(issue)
+        elif evidence_key(quote) in previous_evidence:
+            reasons.append('与已保留题目重复考查同一证据或题意')
         elif validator.find_near_duplicate(q['question'], previous):
             reasons.append('与已保留的题目文字高度相似')
+        elif practice_plan and practice_plan.duplicate(q, quote):
+            reasons.append(REPEATED)
         else:
             evidence[ident] = quote
             literal = review_quantity(q, source)
@@ -118,6 +184,8 @@ def validate_questions(questions, source, previous):
     seen = set()
     if pending:
         try:
+            if on_model_review:
+                on_model_review()
             for row in request_reviews(pending, units):
                 ident = row.get('id') if isinstance(row, dict) else None
                 if type(ident) is not int or ident not in pending:
@@ -135,7 +203,7 @@ def validate_questions(questions, source, previous):
                 errors[ident].append(f'批量独立核验失败：{str(exc)[:120]}')
 
     passed, rejected = [], []
-    evidence_used = {q['evidenceQuote'] for q in previous if 'evidenceQuote' in q}
+    evidence_used = previous_evidence.copy()
     for ident, q in enumerate(questions, 1):
         reasons = errors[ident]
         quote = ''
@@ -157,15 +225,13 @@ def validate_questions(questions, source, previous):
             else:
                 quote = evidence[ident]
         if not reasons:
-            if issue := standalone_issue(q['question'], quote):
-                reasons.append(issue)
-            elif quote in evidence_used or validator.find_near_duplicate(q['question'], passed):
+            if evidence_key(quote) in evidence_used or validator.find_near_duplicate(q['question'], passed):
                 reasons.append('与已保留题目重复考查同一证据或题意')
         if reasons:
             rejected.append({'indexInPart': ident, 'question': q if isinstance(q, dict) else repr(q),
                              'reasons': reasons, 'status': 'rejected_or_needs_review'})
             continue
-        evidence_used.add(quote)
+        evidence_used.add(evidence_key(quote))
         passed.append(dict(q, explanation=quote, evidenceQuote=quote, reviewStatus='auto_prechecked',
                            reviewMethod=method, reviewModel=validator.REVIEW_MODEL if method == 'batch_indexed_v1' else method,
                            explanationModel='indexed_source_v1'))

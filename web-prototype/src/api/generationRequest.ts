@@ -6,7 +6,7 @@ type GenerationRequest =
   | { error: string }
 
 function questionCount(text: string, fallback: number) {
-  const quantities = [...text.matchAll(/(?:(共(?:计)?|合计|总数(?:为)?)|生成|出|给我|来|做|练|^)\s*([+-]?\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万]+)\s*(?:道|题)/g)]
+  const quantities = [...text.matchAll(/(?:(共(?:计)?|合计|总数(?:为)?)|生成|出|给我|来|做|练|^)\s*(?:(?:入门|基础|简单|中等|适中|普通|提高|进阶|困难|较难)(?:难度)?(?:的)?\s*)?([+-]?\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万]+)\s*(?:道|题)/g)]
   const count = (quantities.find(match => match[1]) ?? quantities[0])?.[2]
   if (!count) return fallback
   if (/\d/.test(count)) return Number(count)
@@ -40,7 +40,7 @@ export function readGenerationRequest(requirement: string, hasFiles: boolean, de
   }
   const generic = /(?:软考|软件设计师)(?:考试)?(?:的)?\s*(?:综合|混合)?\s*计算(?:题|练习|专项)/.test(text)
   if (!topics.length && !mixed && !generic) {
-    return { error: '请添加资料，或输入计算题要求，例如“生成 3 道软考补码题”。' }
+    return { error: '请添加与学习需求相关的资料，例如课件、笔记或图片，再发送。' }
   }
   if (/填空|多选|判断题|简答题|问答题|论述题/.test(text)) {
     return { error: '计算题目前按单选题生成。可以改写为“生成 3 道软考补码单选题”。' }

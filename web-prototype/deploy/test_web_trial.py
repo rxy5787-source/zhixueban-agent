@@ -1,6 +1,9 @@
 import concurrent.futures
 from pathlib import Path
 import time
+import json
+import pytest
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
 from requests import ReadTimeout
@@ -27,10 +30,171 @@ def client(app):
     return TestClient(app, base_url=ORIGIN)
 
 
+def test_study_availability_exposes_only_readiness_to_configured_landing(tmp_path, monkeypatch):
+    from backend import web_trial
+
+    landing = 'https://zhixue.pages.test'
+    monkeypatch.setattr(web_trial, 'generation_readiness', lambda **_: {
+        'generationReady': False, 'models': ['private-model'],
+    })
+    with pytest.raises(ValueError, match='TRIAL_ACCESS_CODE'):
+        app_at(tmp_path, landing_origin=landing)
+    browser = client(app_at(tmp_path, access_code='trial-test-invitation', landing_origin=landing))
+    for headers in ({}, {'Origin': 'https://example.test'}):
+        denied = browser.get('/study-availability', headers=headers)
+        assert denied.status_code == 404
+        assert 'access-control-allow-origin' not in denied.headers
+    ready = browser.get('/study-availability', headers={'Origin': landing})
+    assert ready.status_code == 200
+    assert ready.json() == {'status': 'model-unavailable'}
+    assert ready.headers['access-control-allow-origin'] == landing
+    assert ready.headers['cache-control'] == 'no-store'
+    assert 'set-cookie' not in ready.headers
+    assert browser.get('/api/generation-tasks', headers={'Origin': landing}).status_code == 403
+    assert browser.get('/api/generation-tasks').status_code == 401
+    entered = browser.post('/trial-access', headers={'Origin': ORIGIN},
+                           data={'accessCode': 'trial-test-invitation'}, follow_redirects=False)
+    assert entered.status_code == 303
+    assert entered.headers['location'] == '/#home/study'
+
+
+def test_origin_question_requires_source_relation_in_evidence():
+    from backend.practice_quality import standalone_issue
+    assert standalone_issue('光合作用释放的氧气来自何处？', 'Oxygen is released as a byproduct.')
+    assert standalone_issue('光合作用释放的氧气来自何处？', '氧气来自水的分解。') == ''
+
+
+def test_mnemonic_rejects_ambiguous_or_mismatched_cues():
+    from backend import study_chat
+    from types import SimpleNamespace
+
+    for cue in ('乙记址', 'DR记址'):
+        anchor = {'point': '数据缓冲寄存器（DR）', 'cue': cue,
+                  'evidence': '数据缓冲寄存器（DR）：作为CPU和内存之间数据传送的中转站。'}
+        with pytest.raises(ValueError):
+            study_chat.mapped_mnemonic(SimpleNamespace(content=cue), [anchor])
+
+
+def test_reply_review_receives_previous_mnemonic_context(monkeypatch):
+    from backend import study_chat
+    from types import SimpleNamespace
+
+    prior = {'study': {'content': '甲存数，乙记址', 'anchors': [
+        {'point': '数据缓冲寄存器（DR）', 'cue': '乙记址',
+         'evidence': 'DR用于数据传送中转。'}]}}
+    store = SimpleNamespace(get=lambda ident, owner: {'result': prior})
+    captured = {}
+
+    def review(store, job, phase, messages, *args):
+        captured.update(json.loads(messages[0]['content'].split('\n', 1)[1]))
+        return SimpleNamespace(issue='ok')
+
+    monkeypatch.setattr(study_chat, 'model_json', review)
+    job = {'owner': 'web-local', 'request': {
+        'studyKind': 'reply', 'studyParent': 'previous', 'requirements': '这里面的甲乙是什么意思'}}
+    study_chat.review_learning_content(store, job, SimpleNamespace(content='上一轮乙的记址说法有误。'),
+                                      [{'point': 'DR', 'cue': '', 'meaning': '中转数据',
+                                        'evidence': 'DR用于数据传送中转。'}])
+    assert captured['previousAnswer']['content'] == '甲存数，乙记址'
+    assert captured['previousAnswer']['terms'][0]['point'] == '数据缓冲寄存器（DR）'
+
+
+def test_mnemonic_label_clarification_requires_original_evidence():
+    from backend.study_chat import clarify_mnemonic_labels
+    anchor = {'point': '数据缓冲寄存器（DR）', 'cue': '乙记址',
+              'evidence': 'DR用于数据传送中转。', 'ocr': False}
+    parent = {'result': {'study': {'kind': 'mnemonic', 'anchors': [anchor]}}}
+    assert clarify_mnemonic_labels('这里面的乙是什么意思', parent, []) is None
+    result = clarify_mnemonic_labels('这里面的乙是什么意思', parent, [{'text': anchor['evidence']}])
+    assert '乙对应数据缓冲寄存器（DR）' in result['content']
+    assert anchor['evidence'] in result['content']
+    assert result['method'] == 'verified_parent_labels'
+
+
+def test_study_chat_is_available_only_in_a_trial_session(tmp_path):
+    browser = client(app_at(tmp_path))
+    assert browser.get('/api/study-capabilities').status_code == 401
+    assert browser.get('/').status_code == 200
+    assert browser.get('/api/study-capabilities').json() == {'studyChat': True}
+    response = browser.post('/api/study-turns', headers={'Origin': ORIGIN}, json={
+        'parentId': 'a' * 32, 'requestId': '2ab9094f-d2b5-46b8-85c0-e6565ee0ad0c',
+        'requirement': '继续生成练习题', 'kind': 'single_choice',
+    })
+    assert response.status_code == 404
+    assert response.json()['detail'] == '生成任务不存在'
+
+
 def create_exam(browser, library):
     return browser.post('/api/exam-practice-tasks', headers={'Origin': ORIGIN}, json={
         'libraryId': library, 'libraryName': library, 'questionCount': 1, 'topic': 'complement',
     })
+
+
+def test_web_wrong_answer_is_visible_only_to_its_agent(tmp_path, monkeypatch):
+    from backend.agent_api import from_environment
+    from backend.web_practice import INITIAL
+
+    app = app_at(tmp_path)
+    token = 'isolated-web-agent-integration-token'
+    token_headers = {'Authorization': f'Bearer {token}'}
+    url = '/api/agent/weak-knowledge'
+    with client(app) as learner, client(app) as other:
+        assert learner.get('/').status_code == other.get('/').status_code == 200
+        learner_id = learner.cookies[COOKIE].split('.')[0]
+        other_id = other.cookies[COOKIE].split('.')[0]
+        monkeypatch.setenv('ZHIXUE_AGENT_TRIAL_DATA', str(tmp_path / 'data'))
+        monkeypatch.setenv('ZHIXUE_AGENT_SPACE_ID', learner_id)
+        monkeypatch.setenv('ZHIXUE_AGENT_TOKEN', token)
+        with TestClient(from_environment()) as agent:
+            assert agent.get(url, headers=token_headers).json()['weak_knowledge'] == []
+            task = create_exam(learner, 'bkt-integration')
+            assert task.status_code == 201, task.text
+            task_url = f"/api/generation-tasks/{task.json()['taskId']}"
+            question = learner.get(task_url + '/questions').json()['questions'][0]
+            wrong = next(letter for letter in 'ABCD' if letter != question['answer'])
+            payload = {'sessionId': str(uuid4()), 'answers': [{'questionId': question['id'], 'answer': wrong}]}
+            practice_url = task_url + '/practice-sessions'
+            assert other.post(practice_url, json=payload, headers={'Origin': ORIGIN}).status_code == 404
+            completed = learner.post(practice_url, json=payload, headers={'Origin': ORIGIN})
+            assert completed.status_code == 200, completed.text
+            report = completed.json()
+            assert report['answered'] == 1 and report['correct'] == 0
+            point = report['points'][0]
+            assert point['observations'] == 1 and point['reviewPriority']
+            assert 0 < point['mastery'] < INITIAL
+            duplicate = learner.post(practice_url, json=payload, headers={'Origin': ORIGIN})
+            assert duplicate.json() == report
+            history = learner.get('/api/practice-history', params={'libraryId': 'bkt-integration'}).json()
+            assert len(history['sessions']) == 1
+            assert history['points'][0]['mastery'] == point['mastery']
+
+            result = agent.get(url, headers=token_headers)
+            assert result.status_code == 200
+            assert [(p['name'], p['mastery']) for p in result.json()['weak_knowledge']] == [
+                (point['point'], point['mastery']),
+            ]
+            assert agent.get(url, headers=token_headers, params={'space_id': other_id}).status_code == 403
+            second_practice = learner.post(
+                practice_url, json=dict(payload, sessionId=str(uuid4())), headers={'Origin': ORIGIN},
+            )
+            assert second_practice.status_code == 200, second_practice.text
+            updated = second_practice.json()['points'][0]
+            assert updated['observations'] == 2
+            assert 0 < updated['mastery'] < point['mastery']
+            latest = agent.get(url, headers=token_headers).json()['weak_knowledge'][0]
+            assert latest['knowledge_id'] == result.json()['weak_knowledge'][0]['knowledge_id']
+            assert latest['mastery'] == updated['mastery']
+
+        with TestClient(from_environment()) as restarted_agent:
+            assert restarted_agent.get(url, headers=token_headers).json()['weak_knowledge'] == [latest]
+
+        monkeypatch.setenv('ZHIXUE_AGENT_SPACE_ID', other_id)
+        second_token = 'isolated-agent-token-other-space'
+        monkeypatch.setenv('ZHIXUE_AGENT_TOKEN', second_token)
+        with TestClient(from_environment()) as other_agent:
+            assert other_agent.get(url, headers=token_headers).status_code == 401
+            result = other_agent.get(url, headers={'Authorization': f'Bearer {second_token}'})
+            assert result.status_code == 200 and result.json()['weak_knowledge'] == []
 
 
 def test_sessions_are_isolated_and_survive_restart(tmp_path):
@@ -372,7 +536,9 @@ def test_generation_timeout_is_visible_and_can_be_retried(tmp_path, monkeypatch)
     store = browser_store(tmp_path, browser)
     job = store.claim()
 
+    calls = []
     def model_timeout(*args, **kwargs):
+        calls.append(kwargs)
         raise ReadTimeout('simulated Ollama read timeout')
 
     monkeypatch.setattr(generate_from_file, 'generate_questions', model_timeout)
@@ -380,6 +546,7 @@ def test_generation_timeout_is_visible_and_can_be_retried(tmp_path, monkeypatch)
     task = browser.get(f'/api/generation-tasks/{ident}').json()
     assert task['status'] == 'failed', task
     assert '等待本机模型响应超时' in task['error'], task
+    assert len(calls) == 2 and '超时' in calls[1]['feedback']
     retry = browser.post(f'/api/generation-tasks/{ident}/retry', headers={'Origin': ORIGIN})
     assert retry.status_code == 202, retry.text
     new = store.get(retry.json()['taskId'])

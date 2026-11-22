@@ -1,33 +1,38 @@
-import { useState } from 'react'
-import { onlineTrial } from '../deployment'
-import { BookGarden, Icon } from '../components/Icon'
+import { useRef, useState } from 'react'
+import { onlineTrial, staticDemo } from '../deployment'
+import { Icon } from '../components/Icon'
 import type { DocumentKind, Library, LibraryDocument } from '../data/demo'
 
 export function FileBadge({ format, large = false }: { format: LibraryDocument['format']; large?: boolean }) {
   return <span className={`file-badge format-${format.toLowerCase()} ${large ? 'large' : ''}`} aria-hidden="true"><span>{format === 'DOCX' ? 'W' : format === 'JPG' ? 'IMG' : format === 'QSET' ? '题' : format === 'NOTE' ? '记' : format}</span></span>
 }
-export function BookshelfPage({ libraries, deletedCount, onTrash, onOpen, onCreate }: { libraries: Library[]; deletedCount: number; onTrash: () => void; onOpen: (id: string) => void; onCreate: () => void }) {
+export function BookshelfPage({ libraries, deletedCount, loading, error, onRetry, onTrash, onOpen, onCreate }: {
+  libraries: Library[]; deletedCount: number; loading: boolean; error: string
+  onRetry: () => void; onTrash: () => void; onOpen: (id: string) => void; onCreate: () => void
+}) {
   const [query, setQuery] = useState('')
+  const search = useRef<HTMLInputElement>(null)
   const filtered = libraries.filter(library => `${library.title} ${library.subtitle}`.toLowerCase().includes(query.trim().toLowerCase()))
+  function clearSearch() {
+    setQuery('')
+    search.current?.focus()
+  }
   return <div className="bookshelf-page page-enter">
-    <header className="handbook-section-intro bookshelf-intro">
-      <div className="handbook-section-copy">
-        <span className="handbook-tag">学习手帐</span>
-        <h1>我的知识库</h1>
-        <p>把资料和题目收进自己的书架。</p>
-      </div>
-      <BookGarden />
+    <header className="editorial-heading">
+      <div><h1>知识库</h1><p>{staticDemo ? '以下是示例主题。在线知识库尚未开放。' : '按主题整理资料、知识点和练习。'}</p></div>
+      <button className="shelf-create" aria-label="新建知识库" onClick={onCreate}><Icon name="plus" size={18}/>新建</button>
     </header>
     <div className="shelf-tools">
-      <label className="shelf-search"><Icon name="search" size={18}/><input value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索知识库" aria-label="搜索知识库"/>{query && <button aria-label="清空搜索" onClick={() => setQuery('')}><Icon name="close" size={16}/></button>}</label>
-      <button className="shelf-create" aria-label="新建知识库" onClick={onCreate}><Icon name="plus" size={18}/>新建</button>
+      <div className="shelf-search" role="search"><Icon name="search" size={18}/><input ref={search} type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索知识库" aria-label="搜索知识库"/>{query && <button aria-label="清空搜索" onClick={clearSearch}><Icon name="close" size={16}/></button>}</div>
     </div>
-    <div className="shelf-caption"><span>{query ? '搜索结果' : '全部书架'} <small>{filtered.length}</small></span><button className="archive-link" onClick={onTrash}>回收站{deletedCount>0 ? ` · ${deletedCount}` : ''}</button></div>
-    {filtered.length > 0 ? <div className="shelves">{Array.from({ length: Math.ceil(filtered.length / 2) }, (_, row) => <div className="shelf-row" key={row}>{filtered.slice(row * 2, row * 2 + 2).map(library => <button className="book-tile" key={library.id} onClick={() => onOpen(library.id)} aria-label={`打开${library.title}知识库`}>
-      <span className={`book-cover cover-${library.color}`}><span className="book-series">知学伴 / KNOWLEDGE</span><span className="book-mark">{library.mark}</span><strong>{library.title}</strong><span className="book-subtitle">{library.subtitle}</span><span className="book-cover-footer"><span>学习资料集</span><Icon name="arrow" size={16}/></span></span>
-      <span className="book-caption"><strong>{library.title}</strong><span>{library.documents.filter(document => document.kind === 'source').length} 份资料 <i/> {library.documents.filter(document => document.kind === 'questions').length} 份题目集</span><small>{library.updated}</small></span>
-    </button>)}</div>)}</div> : <div className="empty-state"><Icon name="search" size={30}/><h2>没有找到这个知识库</h2><p>试试其他名称，或新建一个学习主题。</p><button className="secondary-button" onClick={onCreate}>新建知识库</button></div>}
-    <p className="shelf-note"><Icon name="folder" size={15}/>原始资料、题目和知识点，按主题一起归档。</p>
+    <div className="shelf-caption"><h2 aria-live="polite">{query.trim() ? '搜索结果' : '全部主题'} <small>{filtered.length}</small></h2><button className="archive-link" onClick={onTrash}>回收站{deletedCount>0 ? ` · ${deletedCount}` : ''}</button></div>
+    {loading && <p className="supporting" role="status">正在读取知识库…</p>}
+    {error && <div className="generation-error" role="alert"><p>{error}</p><button className="archive-link" onClick={onRetry}>重新读取</button></div>}
+    {filtered.length > 0 ? <ul className="catalog-grid">{filtered.map(library => <li key={library.id}><button className="catalog-item" onClick={() => onOpen(library.id)} aria-label={`打开${library.title}知识库`} aria-describedby={`catalog-counts-${library.id}`}>
+      <span className={`catalog-spine cover-${library.color}`} aria-hidden="true"><Icon name="libraries" size={16}/><span>{library.mark}</span></span>
+      <span className="catalog-copy"><strong>{library.title}</strong><span>{library.subtitle}</span><small id={`catalog-counts-${library.id}`}>{library.documents.filter(document => document.kind === 'source').length} 份资料 · {library.documents.filter(document => document.kind === 'questions').length} 份题目集</small></span>
+      <Icon name="chevron" size={16}/>
+    </button></li>)}</ul> : !loading && !error && <div className="empty-state"><Icon name={query.trim() ? 'search' : 'libraries'} size={28}/><h2>{query.trim() ? '没有找到这个知识库' : '还没有知识库'}</h2><p>{query.trim() ? '换个主题名称试试。' : '新建一个主题，归档你的第一份学习资料。'}</p><button className="secondary-button" onClick={query.trim() ? clearSearch : onCreate}>{query.trim() ? '清空搜索' : '新建知识库'}</button></div>}
   </div>
 }
 type Filter = 'all' | DocumentKind
@@ -42,7 +47,7 @@ export function LibraryDetailPage({ library, onBack, onDelete, onRename, onRemov
   const documents = library.documents.filter(document => filter === 'all' || document.kind === filter)
   return <div className="library-detail page-enter">
     <div className="library-actions"><button className="back-link" onClick={onBack}><Icon name="back" size={18}/>我的书架</button><div><button className="archive-link" onClick={onRename}>改名</button><button className="archive-link remove-link" onClick={onDelete}>删除知识库</button></div></div>
-    <div className="library-heading"><span className={`mini-cover cover-${library.color}`}>{library.mark}</span><div><h1>{library.title}</h1><p>{library.subtitle}</p><span>{onlineTrial ? '主题知识库 · 试用存储' : '主题知识库 · 本机存储'}</span></div></div>
+    <div className="library-heading"><span className={`mini-cover cover-${library.color}`}>{library.mark}</span><div><h1>{library.title}</h1><p>{library.subtitle}</p><span>{staticDemo ? '示例主题' : onlineTrial ? '主题知识库 · 试用存储' : '主题知识库 · 本机存储'}</span></div></div>
     <button className="compose-in-library" onClick={onCompose}><span><Icon name="plus" size={19}/>添加资料并出题</span><Icon name="arrow" size={17}/></button>
     <div className="document-filters" aria-label="知识库内容分类">{FILTERS.map(item => <button key={item.id} aria-pressed={filter === item.id} onClick={() => setFilter(item.id)}>{item.title}</button>)}</div>
     {filter === 'knowledge' && library.points.length > 0 && <div className="point-chips">{library.points.map(point => <span key={point}>{point}</span>)}</div>}
@@ -51,7 +56,7 @@ export function LibraryDetailPage({ library, onBack, onDelete, onRename, onRemov
       <button className="document-row" onClick={() => onDocument(document)}><FileBadge format={document.format}/><span><strong>{document.title}</strong><small>{document.description}</small></span><Icon name={document.taskId ? 'play' : 'chevron'} size={15}/></button>
       {managing && (document.taskId || document.kind==='source') && <button className="archive-link remove-link" aria-label={`移除 ${document.title}`} onClick={() => onRemoveItem(document)}>移除</button>}
     </div>)}</div>
-    {documents.length === 0 && <div className="empty-state"><Icon name="folder" size={32}/><h2>{library.documents.length ? '这里还没有这类内容' : '书架准备好了'}</h2><p>添加学习资料，再将生成内容归档到这里。</p><button className="secondary-button" onClick={onCompose}>去添加资料</button></div>}
+    {documents.length === 0 && !(filter === 'knowledge' && library.points.length) && <div className="empty-state"><Icon name="folder" size={28}/><h2>{library.documents.length ? '这里还没有这类内容' : '还没有学习资料'}</h2><p>{staticDemo ? '在线服务尚未开放。' : '添加学习资料，再将生成内容归档到这里。'}</p><button className="secondary-button" onClick={onCompose}>去添加资料</button></div>}
     <div className="library-insights"><button onClick={onRecords}><Icon name="clock" size={19}/><span>练习记录</span><Icon name="chevron" size={14}/></button><button onClick={onAnalysis}><Icon name="reports" size={19}/><span>学习分析</span><Icon name="chevron" size={14}/></button></div>
   </div>
 }

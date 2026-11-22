@@ -79,12 +79,13 @@ def begin(ident: str, plan: UploadPlan):
     web_api.check_library_id(plan.libraryId)
     if plan.questionType != 'single_choice' and plan.questionType not in study_chat.STUDY_TYPES:
         raise HTTPException(422, '当前支持选择题、记忆口诀、填空和资料问答。')
+    study_chat.validate_study_request(plan.questionType, plan.questionCount, plan.requirements)
     try:
         JobRequest(fileIds=['pending'], libraryName=plan.libraryName, subject='资料学习',
                    questionCount=plan.questionCount,
                    requirements=plan.requirements if plan.questionType == 'single_choice' else '')
-    except ValidationError:
-        raise HTTPException(422, '出题要求不符合当前四选一单选题支持范围')
+    except ValidationError as exc:
+        raise HTTPException(422, '；'.join(error['msg'].removeprefix('Value error, ') for error in exc.errors())) from exc
     if sum(file.size for file in plan.files) > 25 * 1024 * 1024:
         raise HTTPException(413, '单次资料总大小不能超过 25 MiB')
     if any(Path(file.name).suffix.lower() not in SUPPORTED for file in plan.files):

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api } from '../api/generation'
 import type { PracticeHistory } from '../api/generation'
 import type { ProfileSettings } from '../api/profileSettings'
-import { onlineTrial } from '../deployment'
+import { onlineTrial, staticDemo } from '../deployment'
 import { Icon } from '../components/Icon'
 import { PointProgressList } from '../components/PointProgressList'
 import { Sheet } from '../components/Sheet'
@@ -28,6 +28,7 @@ export function ProfilePage({ settings, libraries, onSave, onRecords, onSettings
   const libraryKey = libraries.map(library => `${library.id}/${library.title}`).join('|')
 
   useEffect(() => {
+    if (staticDemo) return
     const controller = new AbortController()
     setError('')
     api<PracticeHistory>('/api/practice-history', { signal: controller.signal }).then(value => {
@@ -39,7 +40,7 @@ export function ProfilePage({ settings, libraries, onSave, onRecords, onSettings
   }, [refresh])
 
   useEffect(() => {
-    if (panel !== 'analysis') return
+    if (staticDemo || panel !== 'analysis') return
     const controller = new AbortController()
     setAnalysis(null)
     void Promise.all(libraries.map(async library => {
@@ -79,11 +80,11 @@ export function ProfilePage({ settings, libraries, onSave, onRecords, onSettings
     </header>
     <button className="profile-card learner-card" onClick={() => edit('info')} aria-label="编辑个人信息">
       <span className="avatar"><Icon name={settings.avatar === 'book' ? 'libraries' : settings.avatar} size={27}/></span>
-      <span className="learner-copy"><strong>{settings.nickname}</strong><small>{settings.learningGoal || '为自己设一个学习目标'}</small><small>{onlineTrial ? '浏览器试用空间' : '本机学习空间'}</small></span>
+      <span className="learner-copy"><strong>{settings.nickname}</strong><small>{settings.learningGoal || '为自己设一个学习目标'}</small><small>{staticDemo ? '仅保存在当前浏览器' : onlineTrial ? '浏览器试用空间' : '本机学习空间'}</small></span>
       <Icon name="chevron" size={17}/>
     </button>
 
-    <section className="profile-goal" aria-label="今日学习目标">
+    {!staticDemo && <><section className="profile-goal" aria-label="今日学习目标">
       <div className="profile-section-heading"><h2>今天，学一点</h2><button onClick={() => edit('preferences')}>调整目标<Icon name="chevron" size={13}/></button></div>
       <p>{history ? `今日${todayAtLeast ? '至少' : '完成'} ${todayAnswered} 题` : error ? '暂时无法读取今日练习' : '正在读取今日练习'}<span>目标 {settings.dailyTarget} 题</span></p>
       <progress aria-label="今日答题目标进度" max={settings.dailyTarget} value={Math.min(todayAnswered, settings.dailyTarget)}/>
@@ -94,7 +95,7 @@ export function ProfilePage({ settings, libraries, onSave, onRecords, onSettings
       <div className="profile-section-heading"><h2>最近的积累</h2><span>最近 30 次练习</span></div>
       {error ? <div role="alert"><p>{error}</p><button className="archive-link" onClick={() => setRefresh(value => value + 1)}>重新读取</button></div> :
         <div className="profile-metrics"><div><strong>{history ? recentAnswered : '—'}</strong><span>答题数</span></div><div><strong>{history && recentAnswered ? `${Math.round(recentCorrect / recentAnswered * 100)}%` : '—'}</strong><span>答题正确率</span></div><div><strong>{history ? days : '—'}</strong><span>有练习的天数</span></div></div>}
-    </section>
+    </section></>}
 
     <div className="profile-menu">
       <button onClick={onRecords}><span className="profile-menu-mark"><Icon name="clock" size={20}/></span><span className="profile-menu-copy"><strong>学习记录</strong><small>查看成绩，回到原题练习</small></span><Icon name="chevron" size={16}/></button>
@@ -103,12 +104,12 @@ export function ProfilePage({ settings, libraries, onSave, onRecords, onSettings
       <button onClick={onSettings}><span className="profile-menu-mark"><Icon name="settings" size={20}/></span><span className="profile-menu-copy"><strong>设置与帮助</strong><small>学习空间说明与草稿管理</small></span><Icon name="chevron" size={16}/></button>
     </div>
 
-    <section className="profile-recent" aria-label="最近练习">
+    {!staticDemo && <section className="profile-recent" aria-label="最近练习">
       <div className="profile-section-heading"><h2>最近练习</h2><button onClick={onRecords}>全部记录<Icon name="chevron" size={13}/></button></div>
       {sessions.slice(0, 3).map(item => <button className="profile-record" key={item.sessionId} onClick={() => onOpenTask(item.taskId)}><Icon name="clock" size={17}/><span><strong>{item.libraryName}</strong><small>{new Date(item.created * 1000).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</small></span><b>{item.correct}/{item.answered}</b><Icon name="chevron" size={14}/></button>)}
       {history && !sessions.length && <p className="supporting">完成第一组练习后，这里就会留下你的学习足迹。</p>}
       {!history && !error && <p className="supporting" role="status">正在读取练习…</p>}
-    </section>
+    </section>}
 
     {panel && <Sheet title={panel === 'info' ? '个人信息' : panel === 'preferences' ? '学习偏好' : '学习分析'} onClose={close}>
       {panel === 'info' && <form className="profile-form" onSubmit={event => { event.preventDefault(); save() }}>
@@ -125,7 +126,8 @@ export function ProfilePage({ settings, libraries, onSave, onRecords, onSettings
         <p className="supporting">输入框里明确写出的题量与难度优先。当前支持四选一单选题。</p>{saveError && <p className="field-error" role="alert">{saveError}</p>}<button className="primary-button" type="submit">保存偏好<Icon name="check" size={17}/></button>
       </form>}
       {panel === 'analysis' && <>
-        {!analysis && <p className="supporting" role="status">正在读取各知识库的学习数据…</p>}
+        {staticDemo ? <p className="supporting">在线服务尚未开放。学习分析将在保存答题记录后提供。</p> :
+          !analysis && <p className="supporting" role="status">正在读取各知识库的学习数据…</p>}
         {analysis && <p className="sheet-description">{weakCount ? `${weakCount} 个知识点需要优先巩固。` : known.length ? '继续练习，掌握估计会随作答更新。' : '完成练习并保存结果后，这里会出现掌握估计。'}</p>}
         {analysis?.some(item => !item.data) && <div role="alert"><p className="supporting">部分知识库暂时无法读取，当前仅显示已读取的数据。</p><button className="archive-link" onClick={() => setRefresh(value => value + 1)}>重新读取</button></div>}
         {known.map(({ library, data }) => {

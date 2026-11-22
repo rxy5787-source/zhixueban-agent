@@ -104,10 +104,11 @@ def task_view(job, library_id):
             'libraryDeleted':archived,
             'removedSet':('set',job['id']) in removed,
             'removedQuestionCount':sum(('question',item['id']) in removed for item in questions(job,library_id)),
-            'filteredQuestionCount':sum(bool(standalone_issue(item.get('prompt'),item.get('explanation'))) for item in candidates(job)),
+            'filteredQuestionCount':sum(bool(standalone_issue(item.get('prompt'),item.get('explanation'),item.get('options'))) for item in candidates(job)),
             'savedQuestionCount':sum(item['id'] in saved_ids for item in available),
             'error':error,'resultId':job['id'] if job['state'] not in ('queued','running') else None,
             'libraryId':library_id,'libraryName':library['title'] if library else job['request'].get('libraryName',library_id),'files':job['result'].get('files',[]),'rejected':issues,
+            'coverage':job['result'].get('coverage',[]),
             'reviewNote':job['result'].get('reviewNote',''),'created':job['created'],'updated':job['updated']}
 
 class LibraryInput(BaseModel):

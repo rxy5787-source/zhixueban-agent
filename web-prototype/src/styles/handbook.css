@@ -1,4 +1,3 @@
-.mobile-app--handbook .status-bar { height: 35px; min-height: 35px; padding: 0 24px; color: inherit; font-size: 12px; font-weight: 700; line-height: 16px; }
 .mobile-app--handbook .app-header { min-height: 57px; padding: 0 22px; }
 .mobile-app--handbook .app-brand { min-height: 44px; padding: 0; gap: 9px; background: transparent; font-size: 22px; line-height: 28px; }
 .mobile-app--handbook .app-brand strong { font-weight: 900; }
@@ -9,13 +8,8 @@
 .mobile-app--handbook a { color: var(--color-primary); text-underline-offset: 2px; }
 
 .home-page { display: flex; flex-direction: column; gap: 16px; padding: 16px 22px 22px; }
-.assistant-intro { min-height: 241px; padding: 24px 22px; border-radius: 24px; position: relative; isolation: isolate; background: var(--color-warm); }
-.assistant-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; position: relative; z-index: 1; }
 .handbook-tag { display: flex; align-items: center; gap: 6px; width: 119px; height: 24px; padding-left: 9px; border-radius: 12px; background: #fff7e1; color: var(--color-primary); font-size: 11px; font-weight: 700; line-height: 15px; letter-spacing: 1px; }
 .handbook-tag::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.assistant-intro h1 { font-size: 35px; line-height: 43px; font-weight: 900; letter-spacing: -.6px; }
-.intro-copy { color: #575749; font-size: 13px; font-weight: 500; line-height: 20px; }
-.assistant-art { position: absolute; top: 21px; right: 6px; max-width: 55.6%; height: auto; }
 
 .composer { display: flex; flex-direction: column; gap: 12px; padding: 14px; border: 1px solid var(--color-line); border-radius: 22px; background: var(--color-surface); }
 .composer:focus-within { border-color: #a9b69a; }
@@ -33,7 +27,6 @@
 .send-button:hover:not(:disabled) { background: var(--color-primary-pressed); }
 .send-button:disabled { opacity: 1; background: #687d61; }
 .archive-target { display: flex; align-items: center; gap: 5px; min-width: 0; min-height: 44px; padding: 0; border-radius: 10px; background: transparent; text-align: left; }
-.archive-target img, .last-generation img { flex-shrink: 0; }
 .archive-target-copy { display: grid; flex: 1; gap: 1px; min-width: 0; }
 .archive-target small { color: var(--color-muted); font-size: 10px; line-height: 14px; }
 .archive-target strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; line-height: 16px; }
@@ -43,26 +36,16 @@
 .attachment-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 550; }
 .attached-files button { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 9px; background: transparent; color: var(--color-muted); flex-shrink: 0; }
 .composer-hint { min-height: 17px; text-align: center; color: var(--color-muted); font-size: 11px; line-height: 17px; }
-.last-generation { display: flex; align-items: center; gap: 11px; min-height: 61px; padding: 12px; border-radius: 15px; background: #f0f1e5; text-align: left; }
-.last-generation:hover { background: var(--color-primary-soft); }
-.recent-mark { display: grid; place-items: center; flex-shrink: 0; width: 36px; height: 36px; border-radius: 12px; background: #dfe8d4; }
-.recent-copy { display: grid; gap: 3px; flex: 1; }
-.recent-copy strong { font-size: 13px; line-height: 17px; }
-.recent-copy small { color: var(--color-muted); font-size: 11px; line-height: 14px; }
 
 .handbook-section-intro { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 144px; padding: 18px; border-radius: 24px; background: var(--color-warm); }
 .handbook-section-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 7px; min-width: 0; }
 .handbook-section-copy h1 { font-size: 29px; font-weight: 900; line-height: 1.25; }
 .handbook-section-copy p { font-size: 12px; line-height: 1.6; color: var(--color-muted); }
-.bookshelf-intro .book-garden { width: 105px; height: auto; max-width: 34%; }
 .profile-intro > img { width: 122px; height: auto; max-width: 41%; flex-shrink: 0; }
 .shelf-tools { display: flex; align-items: center; gap: 9px; margin-top: 16px; }
 .shelf-tools .shelf-search { min-width: 0; flex: 1; }
 .shelf-create { display: flex; align-items: center; justify-content: center; gap: 5px; min-height: 44px; flex-shrink: 0; padding: 0 13px; border-radius: 22px; background: var(--color-primary); color: var(--color-surface); font-size: 13px; font-weight: 700; }
 .shelf-create:hover { background: var(--color-primary-pressed); }
-.mobile-app--handbook .shelf-row::after { background: #dfd1b8; border-top-color: #f7eedb; box-shadow: 0 4px 7px #59452310; }
-.mobile-app--handbook .book-cover { border: 1px solid #47371b26; border-radius: 5px 14px 12px 5px; box-shadow: 2px 3px 0 #59452319, inset 5px 0 0 #fff7e499; }
-.mobile-app--handbook .book-cover::after { width: 66px; height: 95px; top: 30px; right: -18px; border: 1px dashed currentColor; border-radius: 44% 54% 51% 41%; box-shadow: none; opacity: .16; transform: rotate(22deg); }
 .mobile-app--handbook .cover-mint { background: var(--color-primary-soft); color: var(--color-primary); }
 .mobile-app--handbook .cover-sand { background: var(--color-warm); color: #654a2c; }
 .mobile-app--handbook .cover-blue { background: #e4e9df; color: #3e544c; }
@@ -115,9 +98,6 @@
 
 @container (max-width: 375px) {
   .home-page { padding-inline: 17px; }
-  .assistant-intro { min-height: 218px; padding-inline: 17px; }
-  .assistant-intro h1 { font-size: clamp(24px, 8.7cqi, 32px); line-height: 1.23; }
-  .assistant-art { top: 50%; translate: 0 -50%; max-width: 52%; }
   .composer-tools { grid-template-columns: 73px minmax(0, 126px) 65px; gap: 5px; }
   .add-file-button, .send-button { gap: 3px; }
   .handbook-section-intro { padding-inline: 15px; }

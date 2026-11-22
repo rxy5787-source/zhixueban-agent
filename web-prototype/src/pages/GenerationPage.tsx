@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { api, ApiHttpError, isActiveTask } from '../api/generation'
 import type { GenerationTask, Question } from '../api/generation'
 import { Icon } from '../components/Icon'
+import { QuestionEvidence } from '../components/QuestionEvidence'
 import { PracticePage } from './PracticePage'
 import { StudyResultCard } from './StudyConversation'
 
@@ -79,6 +80,9 @@ export function GenerationPage({taskId,uploadPercent,uploadDetail,submittingExam
   </div>
   if(practicing && task && canPractice)return <PracticePage taskId={task.taskId} questions={questions} onExit={()=>onPractice(false)}/>
   const duration = task?.created ? Math.max(0, Math.round((finished ? (task.updated ?? task.created) : Date.now()/1000) - task.created)) : null
+  const lastPhase = task?.events.at(-1)
+  const phaseSeconds = running && lastPhase && lastPhase.stage === task?.stage
+    ? Math.max(0, Math.floor(Date.now() / 1000 - lastPhase.created)) : null
   return <div className="generation-page page-enter">
     <button className="back-link" onClick={onBack} disabled={!taskId}><Icon name="back" size={18}/>{running ? '回到首页，任务继续' : '回到首页'}</button>
     <header className="generation-intro">
@@ -88,15 +92,23 @@ export function GenerationPage({taskId,uploadPercent,uploadDetail,submittingExam
     </header>
     {!finished && <div className="live-stage" role="status">{!taskId ? submittingExam ? '正在生成题目与解析…' : uploadPercent===100 ? '文件已发送，正在校验与创建任务…' : `上传中${uploadPercent===null ? '…' : ` · ${uploadPercent}%（实际传输）`}` : error ? '暂时无法更新进度' : task?.stage ?? '正在查询任务…'}</div>}
     {!taskId && !submittingExam && uploadDetail && <p className="generation-counts" role="status">{uploadDetail}</p>}
-    {running && <p className="generation-counts">可切换页面，之后从页头「出题任务」返回。</p>}
+    {running && <p className="generation-counts">{phaseSeconds === null ? '' : `当前步骤已用 ${phaseSeconds} 秒 · `}可从「出题任务」返回查看。</p>}
     {task && <p className="generation-counts">{task.acceptedQuestionCount} 道可练习 · 目标 {task.requestedQuestionCount} 道{running ? ` · 已生成 ${task.generatedQuestionCount} 道候选` : ''}</p>}
+    {!!task?.coverage?.length && (task.coverage.length > 1 || task.coverage[0].reason) && <details className="generation-counts">
+      <summary>考点覆盖</summary>
+      <ul>{task.coverage.map((scope, index) => <li key={index}>{scope.label} · {scope.accepted}/{scope.requested}
+        {scope.reason && ` · ${scope.reason}`}
+      </li>)}</ul>
+    </details>}
     {exam && <p className="prototype-note">原创模拟题 · {exam.label} · <a href={exam.reference} target="_blank" rel="noreferrer">考点出处</a></p>}
     {canPractice && <div className="result-actions">
       <button className="primary-button" onClick={()=>onPractice(true)}>{running ? '先练已通过的题' : '开始练习'}<Icon name="arrow" size={18}/></button>
       {success && !saved && <button className="secondary-button" disabled={saving} onClick={()=>void save()}>{saving ? '保存中…' : '保存到知识库'}</button>}
       {saved && task && <button className="secondary-button" onClick={()=>onLibrary(task.libraryId)}>已归档到「{task.libraryName}」<Icon name="chevron" size={14}/></button>}
     </div>}
-    {task?.status==='partial' && canPractice && <p className="generation-counts">本次只放行达到初筛标准的题目。</p>}
+    {task?.status==='partial' && canPractice && <p className="generation-counts">{task.acceptedQuestionCount < task.requestedQuestionCount
+      ? '本次未达到目标题量。可以先练通过质检的题，或补充资料后重新提交。'
+      : '目标题量已达到，部分资料处理失败。'}</p>}
     {!!task?.filteredQuestionCount && <p className="prototype-note">历史结果中有 {task.filteredQuestionCount} 道题缺少独立题意或可验证的条件，已从练习中排除。</p>}
     {!!task?.removedQuestionCount && <p className="prototype-note">{task.removedQuestionCount} 道题已移入回收站。</p>}
     {(error || task?.error) && <div className="generation-error" role="alert"><strong>处理提示</strong><p>{error || task?.error}</p>{error && <button className="secondary-button" onClick={()=>setRetryPoll(value=>value+1)}>重新查询</button>}</div>}
@@ -104,9 +116,13 @@ export function GenerationPage({taskId,uploadPercent,uploadDetail,submittingExam
     {canPractice && <section className="generated-questions" aria-label={exam ? '计算专项题目' : '初筛通过的题目'}><div className="result-heading"><h2>题目预览</h2><span>{questions.length} 题</span></div>{questions.map((question,index)=><article className="generated-question" key={question.id}>
       <div className="question-metadata"><span>第 {index+1} 题 · 单选</span><span>{['','基础','中等','提高'][question.difficulty] ?? '未标注'}</span></div><h3>{question.prompt}</h3>
       <ol className="generated-options">{question.options.map((option,optionIndex)=><li key={optionIndex}><b>{'ABCD'[optionIndex]}</b><span>{option}</span></li>)}</ol>
-      <div className="point-chips">{question.points.map(point=><span key={point}>{point}</span>)}</div>
       <button className="answer-toggle" aria-expanded={revealed.has(question.id)} onClick={()=>setRevealed(previous=>{const next=new Set(previous);next.has(question.id) ? next.delete(question.id) : next.add(question.id);return next})}>{revealed.has(question.id) ? '收起答案与解析' : '查看答案与解析'}<Icon name="chevron" size={14}/></button>
-      {revealed.has(question.id) && <div className="real-explanation"><strong>正确答案：{question.answer}</strong><p>{question.explanation}</p><small>{exam ? '解析依据：题干条件与程序计算' : '解析依据：资料原文摘录'}</small></div>}
+      {revealed.has(question.id) && <div className="real-explanation">
+        <strong>正确答案：{question.answer}</strong><p>{question.explanation}</p>
+        <small>{exam ? '解析依据：题干条件与程序计算' : '解析依据：资料原文摘录'}</small>
+        <QuestionEvidence question={question}/>
+        <div className="point-chips">{question.points.map(point=><span key={point}>{point}</span>)}</div>
+      </div>}
       <p className="question-source">来源：{question.ai.sourceFile} · {question.ai.sourceLocation}</p>{question.visualValidationLimit && <p className="visual-limit">{question.visualValidationLimit}</p>}
       {saved && task && <button className="archive-link remove-link" aria-label={`移除第 ${index+1} 题`} onClick={()=>onRemoveQuestion(question,task.libraryName)}>移除本题</button>}
     </article>)}</section>}

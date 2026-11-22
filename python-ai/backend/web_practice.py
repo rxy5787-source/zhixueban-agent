@@ -8,6 +8,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 INITIAL, GUESS, SLIP, LEARN = .25, .28, .10, .08
+WEAK_MASTERY_THRESHOLD = .45
 
 
 class Answer(BaseModel):
@@ -42,7 +43,7 @@ def update_mastery(prior, correct):
 
 def point_view(row):
     return {'point': row['label'], 'observations': row['attempts'], 'correct': row['correct'],
-            'mastery': row['mastery'], 'reviewPriority': row['mastery'] < .45}
+            'mastery': row['mastery'], 'reviewPriority': row['mastery'] < WEAK_MASTERY_THRESHOLD}
 
 
 def save_session(db, submission, task_id, library_id, questions, now):
@@ -110,3 +111,17 @@ def history(db, library_id):
         points = [point_view(row) for row in db.execute('''SELECT * FROM web_point_progress
             WHERE library_id=? ORDER BY mastery,label''', (library_id,))]
     return {'sessions': sessions, 'points': points}
+
+
+def weak_knowledge(db, limit):
+    return db.execute('''
+        SELECT p.library_id, p.point_key, p.label, p.mastery
+        FROM web_point_progress p
+        JOIN web_libraries l ON l.id = p.library_id
+        WHERE p.attempts > 0 AND p.mastery < ?
+          AND NOT EXISTS (
+              SELECT 1 FROM web_deleted_libraries d WHERE d.library_id = p.library_id
+          )
+        ORDER BY p.mastery, p.library_id, p.point_key
+        LIMIT ?
+    ''', (WEAK_MASTERY_THRESHOLD, limit)).fetchall()

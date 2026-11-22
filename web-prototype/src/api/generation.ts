@@ -6,7 +6,7 @@ export type Question = {
   id: string; libraryId: string; prompt: string; options: string[]; answer: string
   explanation: string; points: string[]; difficulty: number; qualityStatus: string
   visualValidationLimit: string
-  ai: { sourceFile: string; sourceLocation: string; extraction: string; generationModel: string; reviewModel: string }
+  ai: { sourceFile: string; sourceLocation: string; evidenceQuote?: string; extraction: string; generationModel: string; reviewModel: string }
 }
 export type ExamTopic = 'mixed' | 'complement' | 'overflow' | 'floating' | 'graph' | 'cache'
 export type GenerationTask = {
@@ -15,6 +15,7 @@ export type GenerationTask = {
   generatedQuestionCount: number; acceptedQuestionCount: number; requestedQuestionCount: number
   savedQuestionCount: number
   availableQuestions?: Question[]; filteredQuestionCount?: number; created?: number; updated?: number
+  coverage?: { label: string; requested: number; accepted: number; sources: string[]; reason: string }[]
   study?: { kind: Exclude<StudyKind, 'single_choice'>; saved: boolean; hidden: boolean; result: StudyOutput | null } | null
   libraryDeleted?: boolean
   examPractice?: { topic: ExamTopic; label: string; reference: string } | null
