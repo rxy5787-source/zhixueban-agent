@@ -110,8 +110,7 @@ def request_reviews(candidates, units):
     prompt = (
         '独立检查每题的四个选项。只有本题 evidence 支持唯一答案才用 ok。'
         '其他资料与其他题的引文可以用来发现冲突，不能代替本题 evidence。'
-        '核对题干与 evidence 的条件、运算符、限定词和对象是否一致。'
-        '多解用 ambiguous，证据不足或条件不同用 unsupported，陈述句或题意不明用 vague。'
+        '多解用 ambiguous，证据不足用 unsupported，题意或选项无法判定用 vague。'
         '仅当题干引用了缺失的图或表且必须看图表才能作答时用 visual。'
         '有唯一答案时返回正确字母和 ok；拒绝时 answer 必须是 X。'
         '每题返回一次 id、answer、issue，只输出 JSON。\n'
