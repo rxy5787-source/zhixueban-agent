@@ -16,10 +16,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
-      - name: Checkout pinned PR48 source without working secrets
+      - name: Checkout pinned PR51 source without working secrets
         uses: actions/checkout@v4
         with:
-          ref: 2ba698948644553676fe9bcaa31ac9326dca8c40
+          ref: b4826b96a17994867cc3d671d0700effcdc4f2a7
           persist-credentials: false
       - name: Create and verify source archive
         shell: bash
@@ -27,8 +27,8 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import datetime, hashlib, json, pathlib, re, subprocess, zipfile
-          SHA = '2ba698948644553676fe9bcaa31ac9326dca8c40'
-          dest = pathlib.Path('/tmp/zhixueban_graduation_full_source_2026-11-18.zip')
+          SHA = 'b4826b96a17994867cc3d671d0700effcdc4f2a7'
+          dest = pathlib.Path('/tmp/zhixueban_graduation_full_source_2026-11-23.zip')
           root = pathlib.Path.cwd()
           prefix = 'zhixueban-graduation-project/'
           banned = {'.git', '.gradle', '.idea', '.venv', 'venv', 'node_modules', 'dist', 'build', 'target', '__pycache__', '.pytest_cache', '.next', 'coverage', 'uploads', 'artifacts'}
@@ -59,13 +59,13 @@ jobs:
               info = (
                   '# 知学伴毕业设计完整源码包\n\n'
                   '本ZIP包含Android端、Web端、Python后端/Agent、项目文档及GitHub Actions配置。\n'
-                  '源码来自已验证的GitHub草稿PR #48：\\n'
-                  'https://github.com/rxy5787-source/zhixueban-agent/pull/48\\n\n'
+                  '源码来自2026-11-23最新 Web 功能PR #51（尚未合并main）：\\n'
+                  'https://github.com/rxy5787-source/zhixueban-agent/pull/51\\n\n'
                   '固定提交：' + SHA + '\n'
-                  '导出日期：2026-11-18\n\n'
+                  '导出日期：2026-11-23\n\n'
                   '已排除常见密钥、数据库、缓存、构建产物和机器本地环境文件。\n'
                   '不包含Ollama/Qwen模型权重、系统依赖或Android SDK。\n'
-                  '注意：Android真机与本地Qwen完整业务闭环仍需本机测试。\n'
+                  '注意：Qwen已在本地完成部分实测，但PDF/图片、Android真机及完整手机公网流程仍需补测；该源码快照不代表正式网站已发布。\n'
                   '请先阅读项目根目录 README.md，并根据实际电脑环境配置。\n'
               ).replace('\\n', '\n')
               archive.writestr(prefix + '打包说明.md', info.encode('utf-8'))
@@ -86,7 +86,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: zhixueban-graduation-project-source
-          path: /tmp/zhixueban_graduation_full_source_2026-11-18.zip
+          path: /tmp/zhixueban_graduation_full_source_2026-11-23.zip
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
