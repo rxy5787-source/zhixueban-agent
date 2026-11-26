@@ -41,6 +41,6 @@ docker compose logs --tail=80 models app caddy
 
 ## 从开发目录重新打包
 
-在项目根目录运行 `pwsh -File web-prototype/deploy/prepare.ps1`。默认从 `E:\GraduationProject\AdaptiveQuestionAI` 读取 Python 源码。可用 `-PythonProject` 指向其他副本，用 `-OutputZip` 指定新的 ZIP 路径。打包脚本按清单复制源码，并只在导出的 Python 副本上应用试用补丁。学习数据库、已上传资料、模型缓存和密钥都由服务器单独创建。
+在项目根目录运行 `pwsh -File web-prototype/deploy/prepare.ps1`。默认读取与 `web-prototype` 同属当前项目的 `python-ai` 目录。可用 `-PythonProject` 指向其他副本，用 `-OutputZip` 指定新的 ZIP 路径。打包脚本按清单复制源码，并只在导出的 Python 副本上应用试用补丁。学习数据库、已上传资料、模型缓存和密钥都由服务器单独创建。
 
 [Docker Compose 启动顺序](https://docs.docker.com/compose/how-tos/startup-order/) · [Ollama 容器说明](https://docs.ollama.com/docker) · [Caddy 自动 HTTPS](https://caddyserver.com/docs/automatic-https)

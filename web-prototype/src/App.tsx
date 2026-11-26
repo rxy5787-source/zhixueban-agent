@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
-import type { CSSProperties } from 'react'
+import { learningStorageKey } from './api/learningAccount'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { onlineTrial } from './deployment'
 import { DESTINATIONS, LIBRARY_SEEDS } from './data/demo'
 import type { Destination, Library, LibraryDocument } from './data/demo'
-import { api, clearPendingSubmission, isActiveTask, submitTask } from './api/generation'
+import { api, ApiHttpError, clearPendingSubmission, isActiveTask, submitTask } from './api/generation'
 import type { DeletedLibrary, LibraryItem, PracticeHistory, StoredLibrary } from './api/generation'
 import { readGenerationRequest } from './api/generationRequest'
 import { useTaskHistory } from './api/useTaskHistory'
@@ -12,6 +13,7 @@ import { Icon } from './components/Icon'
 import { PointProgressList } from './components/PointProgressList'
 import { Sheet } from './components/Sheet'
 import { HomePage } from './pages/HomePage'
+import { WelcomePage } from './pages/WelcomePage'
 import { ProfilePage } from './pages/ProfilePage'
 import { loadProfileSettings, preferredRequirements, saveProfileSettings } from './api/profileSettings'
 import type { ProfileSettings } from './api/profileSettings'
@@ -19,20 +21,18 @@ import type { SelectedFile } from './pages/HomePage'
 import { continueStudy, readStudyThread, storeStudyThread, studyIntent } from './api/study'
 import type { StudyTurn } from './api/study'
 import { BookshelfPage, FileBadge, LibraryDetailPage } from './pages/LibraryPage'
-import handbookStatus from './assets/handbook/status.svg'
-import handbookBook from './assets/handbook/brand-book.svg'
-import handbookClock from './assets/handbook/clock.svg'
+import { readRoute, STUDY_HASH } from './routes'
+import type { Route } from './routes'
 
-type Route = { destination: Destination; libraryId?: string; taskId?: string; practicing?: boolean }
 const UPLOAD_DRAFT_KEY = 'zhixue-upload-draft'
 function uploadDraft(): { libraryId: string; requirements: string } | null {
   try {
-    const value = JSON.parse(localStorage.getItem(UPLOAD_DRAFT_KEY) ?? sessionStorage.getItem(UPLOAD_DRAFT_KEY) ?? 'null')
+    const value = JSON.parse(localStorage.getItem(learningStorageKey(UPLOAD_DRAFT_KEY)) ?? sessionStorage.getItem(learningStorageKey(UPLOAD_DRAFT_KEY)) ?? 'null')
     if (typeof value?.libraryId === 'string' && typeof value?.requirements === 'string') return value
   } catch { /* A disabled browser store still allows an in-page upload. */ }
   return null
 }
-const BASE_LIBRARIES: Library[] = LIBRARY_SEEDS.map(library=>({...library,documents:[],points:[],records:[],question:{stem:'',options:[]}}))
+const BASE_LIBRARIES = LIBRARY_SEEDS
 const TASK_KEY='zhixue-last-generation-task'
 const TASK_STATUS: Record<string,string> = { queued:'排队中', running:'生成中', succeeded:'已完成', partial:'部分完成', failed:'未完成', interrupted:'服务中断', cancelled:'已取消' }
 const ITEM_LABEL = {source:'原始资料',set:'题目集',question:'单题',task:'任务记录',study:'学习内容'}
@@ -43,24 +43,19 @@ const REMOVE_NOTE = {
   task:'该记录会从「出题任务」移出，已保存的题目仍可从知识库打开。',
   study:'这份学习内容会移入回收站，恢复后可以继续查看。',
 }
-function previousTask(){try{return localStorage.getItem(TASK_KEY) ?? ''}catch{return ''}}
+function previousTask(){try{return localStorage.getItem(learningStorageKey(TASK_KEY)) ?? ''}catch{return ''}}
 type Panel = { type: 'demo' | 'target' | 'create' | 'overview' | 'settings' | 'tasks' | 'trash' }
   | { type: 'delete' | 'rename'; libraryId: string }
   | { type: 'item-remove' | 'task-cancel'; item: LibraryItem }
   | { type: 'document'; libraryId: string; documentId: string }
   | { type: 'records' | 'analysis'; libraryId?: string }
   | null
-function readRoute(): Route {
-  const [path, id, mode] = window.location.hash.slice(1).split('/')
-  if (path === 'libraries') { try { return { destination: 'libraries', libraryId: id ? decodeURIComponent(id) : undefined } } catch { return { destination: 'libraries' } } }
-  if (path === 'home' && id && /^[a-f0-9]{32}$/.test(id)) return {destination:'home',taskId:id,practicing:mode==='practice'}
-  if (path === 'profile' || path === 'reports') return { destination: 'profile' }
-  return { destination: 'home' }
-}
 
-export function App() {
+export function App({ accountAction }: { accountAction?: ReactNode }) {
   const [route, setRoute] = useState<Route>(readRoute)
-  const [width, setWidth] = useState('393')
+  const pageRef = useRef<HTMLElement>(null)
+  const pageKey = `${route.destination}/${route.libraryId ?? route.taskId ?? (route.study ? 'study' : '')}`
+  useEffect(() => { pageRef.current?.focus({ preventScroll: true }) }, [pageKey])
   const [profile, setProfile] = useState(loadProfileSettings)
   function changeProfile(value: ProfileSettings) {
     try { saveProfileSettings(value); setProfile(value); return true } catch { return false }
@@ -71,8 +66,13 @@ export function App() {
   const [contentRevision,setContentRevision] = useState(0)
   const [libraryMutation, setLibraryMutation] = useState('')
   const [libraryError, setLibraryError] = useState('')
+  const [libraryRead, setLibraryRead] = useState<{ loading: boolean; error: string }>({ loading: true, error: '' })
   const [studyEnabled, setStudyEnabled] = useState(false)
   const [studyTurns, setStudyTurns] = useState(readStudyThread)
+  const [missingStudyTasks, setMissingStudyTasks] = useState<ReadonlySet<string>>(() => new Set())
+  const markStudyTaskMissing = useCallback((id: string) => {
+    setMissingStudyTasks(previous => previous.has(id) ? previous : new Set([...previous, id]))
+  }, [])
   const [targetId, setTargetId] = useState(()=>uploadDraft()?.libraryId ?? readStudyThread().at(-1)?.libraryId ?? 'sql')
   useEffect(() => {
     const controller = new AbortController()
@@ -114,9 +114,18 @@ export function App() {
   },[])
   const completedTasks=tasks.filter(task=>task.status==='succeeded' || task.status==='partial').map(task=>task.taskId).sort().join(',')
   const libraryTaskVersion=route.destination==='libraries' ? completedTasks : ''
+  const readLibraries = useCallback(async () => {
+    setLibraryRead({ loading: true, error: '' })
+    try {
+      await refreshLibraries()
+      setLibraryRead({ loading: false, error: '' })
+    } catch {
+      setLibraryRead({ loading: false, error: '暂时无法同步知识库。可重新读取最新资料。' })
+    }
+  }, [refreshLibraries])
   useEffect(()=>{
-    void refreshLibraries().catch(()=>{/* Submission shows a recoverable connection error. */})
-  },[refreshLibraries,route.destination,libraryTaskVersion])
+    void readLibraries()
+  },[readLibraries,route.destination,libraryTaskVersion])
   const [newName, setNewName] = useState('')
   const [nameError, setNameError] = useState('')
   const [notice, setNotice] = useState('')
@@ -142,7 +151,7 @@ export function App() {
       setRoute(readRoute())
       if (oldHash === '#home/exam') {
         setRequirement(previous => previous || '生成 5 道软考综合计算题')
-        window.history.replaceState(null, '', '#home')
+        window.history.replaceState(null, '', STUDY_HASH)
       }
       setPanel(oldHash === '#reports' ? { type: 'overview' } : null)
       if (oldHash === '#today' || oldHash === '#reports') window.history.replaceState(null, '', oldHash === '#today' ? '#home' : '#profile')
@@ -159,28 +168,41 @@ export function App() {
     window.location.hash = `${destination}${libraryId ? `/${encodeURIComponent(libraryId)}` : ''}`
   }
 
+  function openStudy() {
+    setPanel(null)
+    setRoute({ destination: 'home', study: true })
+    window.location.hash = STUDY_HASH
+  }
+
   function prepareWeakPointReview(libraryId: string) {
-    navigate('home')
+    openStudy()
     if (submitting || files.length || requirement.trim() || uploadDraft()) {
       setNotice('已保留首页的出题草稿。处理后再从学习分析开始薄弱点练习。')
       return
     }
     setTargetId(libraryId)
-    setRequirement('根据资料优先生成本知识库的薄弱知识点练习')
+    setRequirement('根据资料优先生成本知识库薄弱知识点的四选一单选题')
     setFeedback('')
-    setNotice('请添加相关学习资料，再点击出题。')
+    const latestStudy = studyTurns.at(-1)
+    const previous = studyEnabled && latestStudy?.libraryId === libraryId && !missingStudyTasks.has(latestStudy.id) ? latestStudy : undefined
+    setNotice(previous ? '将沿用当前对话的资料。确认要求后发送。' : '请添加相关学习资料，再点击出题。')
   }
-  function resetDemo() {
+  function clearDraft() {
     setFiles([]); setRequirement(''); setFeedback(''); setNewName(''); setNameError('')
     clearPendingSubmission()
-    try { localStorage.removeItem(UPLOAD_DRAFT_KEY); sessionStorage.removeItem(UPLOAD_DRAFT_KEY) } catch { /* Draft state is already cleared in memory. */ }
+    try { localStorage.removeItem(learningStorageKey(UPLOAD_DRAFT_KEY)); sessionStorage.removeItem(learningStorageKey(UPLOAD_DRAFT_KEY)) } catch { /* Draft state is already cleared in memory. */ }
+  }
+  function resetDemo() {
+    clearDraft()
     navigate('home'); setNotice('出题草稿已清空，已保存题库保留')
   }
 
   function newStudyThread() {
     if (submitting) return
     setStudyTurns([])
-    resetDemo()
+    setMissingStudyTasks(new Set())
+    clearDraft()
+    setNotice('已开启新对话')
   }
   function selectFiles(selected: File[]) {
     if (!selected.length) return
@@ -261,7 +283,7 @@ export function App() {
     finally{setLibraryMutation('')}
   }
   function rememberTask(id:string){
-    setRecentTask(id);try{localStorage.setItem(TASK_KEY,id)}catch{/* Task remains addressable by URL. */}
+    setRecentTask(id);try{localStorage.setItem(learningStorageKey(TASK_KEY),id)}catch{/* Task remains addressable by URL. */}
   }
   function openTask(id:string, practice = false){
     rememberTask(id)
@@ -286,11 +308,16 @@ export function App() {
     if(active)window.location.hash=hash
     else window.history.replaceState(null,'',`#${hash}`)
   }
+  const target = libraries.find(library => library.id === targetId) ?? libraries[0]
+  const latestTurn = studyTurns.at(-1)
+  const storedContext = latestTurn?.libraryId === target?.id ? latestTurn : undefined
+  const contextTurn = storedContext && !missingStudyTasks.has(storedContext.id) ? storedContext : undefined
+
   async function generate(){
     if (submitting || (!files.length && !requirement.trim())) return
     if(!target){setPanel({type:'target'});return}
     const message = requirement.trim() || '根据资料生成选择题'
-    const parent = studyEnabled && !files.length && studyTurns.at(-1)?.libraryId === target.id ? studyTurns.at(-1) : undefined
+    const parent = studyEnabled && !files.length ? contextTurn : undefined
     const inStudy = studyEnabled && (!!files.length || !!parent)
     const intent = studyIntent(message, parent?.kind)
     const studyKind = inStudy ? intent : 'single_choice'
@@ -305,14 +332,14 @@ export function App() {
     }
     const library = { libraryId: target.id, libraryName: target.title }
     if (onlineTrial && request.kind === 'material' && files.length) {
-      try { localStorage.setItem(UPLOAD_DRAFT_KEY, JSON.stringify({ libraryId: library.libraryId, requirements: requirement })) }
+      try { localStorage.setItem(learningStorageKey(UPLOAD_DRAFT_KEY), JSON.stringify({ libraryId: library.libraryId, requirements: requirement })) }
       catch { /* The selected files can still be uploaded in this page. */ }
     }
     setSubmitting(request.kind)
     setUploadPercent(null)
     setUploadDetail('')
     setFeedback('')
-    navigate('home')
+    openStudy()
     try{
       let weakPoints: string[] = []
       if (request.kind === 'material' && studyKind === 'single_choice' && (profile.weakFirst || /薄弱/.test(requirement))) {
@@ -327,32 +354,37 @@ export function App() {
           body: JSON.stringify({ ...library, topic: request.topic, questionCount: request.questionCount }),
         })
         : parent
-          ? await continueStudy(parent.id, generationRequirements || message, studyKind, request.questionCount)
+          ? await continueStudy(parent.id, generationRequirements || message, studyKind, request.questionCount).catch(error => {
+              if (error instanceof ApiHttpError && error.status === 404) {
+                markStudyTaskMissing(parent.id)
+                throw new Error('当前学习空间找不到上一轮任务。请重新上传原资料，再发送这条要求。')
+              }
+              throw error
+            })
           : await submitTask(files.map(file => file.file), {
             ...library, requirements: generationRequirements, questionCount: String(request.questionCount), questionType: studyKind,
           }, setUploadPercent, setUploadDetail)
       setFiles([])
       setRequirement('')
-      try { localStorage.removeItem(UPLOAD_DRAFT_KEY); sessionStorage.removeItem(UPLOAD_DRAFT_KEY) } catch { /* The task has its own saved entry. */ }
+      try { localStorage.removeItem(learningStorageKey(UPLOAD_DRAFT_KEY)); sessionStorage.removeItem(learningStorageKey(UPLOAD_DRAFT_KEY)) } catch { /* The task has its own saved entry. */ }
       if (inStudy && request.kind === 'material') {
         const turn: StudyTurn = { id: result.taskId, requirement: message, kind: studyKind, ...library,
           sources: parent?.sources ?? files.map(file => file.name) }
         setStudyTurns(previous => [...previous.filter(item => item.id !== turn.id), turn].slice(-12))
         rememberTask(result.taskId)
         refreshTasks()
-        if (window.location.hash !== '#home') setNotice('已提交学习任务，可回首页查看这轮对话。')
+        if (window.location.hash !== STUDY_HASH) setNotice('已提交学习任务，可回学习对话查看这轮结果。')
       }
-      else if(window.location.hash==='#home') openTask(result.taskId)
+      else if(window.location.hash===STUDY_HASH) openTask(result.taskId)
       else {rememberTask(result.taskId);refreshTasks();setNotice('出题任务已提交，可从「出题任务」查看进度。')}
     }catch(error){
       const message=error instanceof Error ? error.message : '提交生成任务失败，请重试'
       setFeedback(message)
-      if(window.location.hash!=='#home')setNotice('出题任务未提交成功，请回首页查看原因。')
+      if(window.location.hash!==STUDY_HASH)setNotice('出题任务未提交成功，请回学习对话查看原因。')
     }
     finally{setSubmitting(null)}
   }
 
-  const target = libraries.find(library => library.id === targetId) ?? libraries[0]
   const activeTaskCount=tasks.filter(isActiveTask).length
   const latest=tasks[0]?.taskId ?? (tasksLoaded ? '' : recentTask)
   const activeLibrary = libraries.find(library => library.id === route.libraryId)
@@ -360,42 +392,39 @@ export function App() {
   const document = panel?.type === 'document' ? panelLibrary?.documents.find(item => item.id === panel.documentId) : undefined
   const title = panel?.type === 'item-remove' ? `移除${ITEM_LABEL[panel.item.kind]}` : panel?.type === 'task-cancel' ? '取消生成任务' : panel?.type === 'rename' ? '知识库改名' : panel?.type === 'tasks' ? '出题任务' : panel?.type === 'delete' ? '删除知识库' : panel?.type === 'trash' ? '回收站' : panel?.type === 'demo' ? (onlineTrial ? '关于在线试用' : '关于这份原型') : panel?.type === 'target' ? '选择归档知识库' : panel?.type === 'create' ? '新建知识库' : panel?.type === 'document' ? document?.title ?? '文档示例' : panel?.type === 'analysis' ? '学习分析' : panel?.type === 'records' ? '学习记录' : panel?.type === 'overview' ? '总体学习分析' : '应用设置'
 
-  return <div className="workbench" style={{ '--preview-width': `${width}px` } as CSSProperties}>
-    <header className="preview-toolbar"><div className="preview-identity"><img src="/favicon.svg" width="32" height="32" alt=""/><div><strong>知学伴</strong><span>上传资料 → 生成练习 → 归档学习</span></div></div><div className="preview-tools"><select aria-label="预览宽度" value={width} onChange={event => setWidth(event.target.value)}><option value="393">393 × 852 基准</option><option value="360">360 紧凑屏</option><option value="320">320 窄屏检查</option></select><button className="reset-button" onClick={resetDemo}>清空草稿</button></div></header>
+  return <div className="workbench editorial-workbench">
     <div className="phone-frame"><div className="mobile-app mobile-app--handbook">
       <div className="app-content" inert={panel !== null} aria-hidden={panel ? true : undefined}>
-        <div className="status-bar" aria-hidden="true">
-          <span>09:41</span>
-          <img src={handbookStatus} width="54" height="14" alt=""/>
-        </div>
         <header className="app-header">
           <button type="button" className="app-brand" aria-label={onlineTrial ? '知学伴 · 关于在线出题' : '知学伴 · 关于本机出题'} onClick={() => setPanel({ type: 'demo' })}>
-            <span className="handbook-brand-mark"><img src={handbookBook} width="23" height="23" alt=""/></span><strong>知学伴</strong>
+            <span className="handbook-brand-mark"><Icon name="libraries" size={20}/></span><strong>知学伴</strong>
           </button>
           <div className="header-actions">
+            {accountAction}
             {!route.practicing && <button className="task-entry" onClick={openTasks}>
-              <img src={handbookClock} width="17" height="17" alt=""/>
+              <Icon name="clock" size={17}/>
               出题任务{(activeTaskCount>0 || submitting) && <span>{activeTaskCount || '提交中'}</span>}
             </button>}
           </div>
         </header>
-        <main className="page-scroll" key={`${route.destination}/${route.libraryId ?? route.taskId ?? ''}`}>
-          {route.destination === 'home' && (route.taskId || (submitting && (!studyEnabled || submitting === 'exam')) ? (
+        <main className="page-scroll" key={pageKey} ref={pageRef} tabIndex={-1}>
+          {route.destination === 'home' && (route.taskId || (route.study && submitting && (!studyEnabled || submitting === 'exam')) ? (
             <GenerationPage taskId={route.taskId} uploadPercent={uploadPercent} uploadDetail={uploadDetail} submittingExam={submitting === 'exam'}
               libraryTitle={target?.title ?? ''} practicing={!!route.practicing} revision={contentRevision}
               onBack={() => navigate('home')} onTask={openTask} onPractice={togglePractice}
               onLibrary={id => navigate('libraries',id)} onSaved={refreshLibraries}
               onRemoveQuestion={(question,libraryName)=>manageItem({kind:'question',id:question.id,label:question.prompt,libraryId:question.libraryId,libraryName})}/>
-          ) : (
+          ) : route.study ? (
             <HomePage files={files} requirement={requirement} libraryTitle={target?.title ?? '选择知识库'} feedback={feedback}
-              studyEnabled={studyEnabled} turns={studyTurns} contextTurn={studyTurns.at(-1)?.libraryId === target?.id ? studyTurns.at(-1) : undefined}
+              studyEnabled={studyEnabled} turns={studyTurns} contextTurn={contextTurn}
+              missingTasks={missingStudyTasks} onMissingTask={markStudyTaskMissing}
               submitting={!!submitting} uploadPercent={uploadPercent} uploadDetail={uploadDetail} revision={contentRevision}
               onNewThread={newStudyThread} onOpenTask={openTask} onRetry={retryStudyTurn} onSaved={refreshLibraries}
               onFiles={selectFiles} onRemove={id=>{setFiles(previous=>previous.filter(file=>file.id!==id));setFeedback('')}}
               onRequirement={value => { setRequirement(value); setFeedback('') }} onTarget={()=>setPanel({type:'target'})} onGenerate={()=>void generate()}
               onRecent={() => latest ? openTask(latest) : openTasks()}/>
-          ))}
-          {route.destination === 'libraries' && (!route.libraryId ? <BookshelfPage libraries={libraries} deletedCount={deletedLibraries.length+removedItems.length} onTrash={()=>{setLibraryError('');setPanel({type:'trash'})}} onOpen={id => navigate('libraries', id)} onCreate={() => { setNameError('');setNewName('');setPanel({ type: 'create' }) }}/> : activeLibrary ? <LibraryDetailPage library={activeLibrary} onDelete={()=>{setLibraryError('');setPanel({type:'delete',libraryId:activeLibrary.id})}} onRename={()=>{setNameError('');setNewName(activeLibrary.title);setPanel({type:'rename',libraryId:activeLibrary.id})}} onRemoveItem={item=>manageItem({kind:item.study ? 'study' : item.taskId ? 'set' : 'source',id:item.taskId ?? item.id,label:item.title,libraryId:activeLibrary.id,libraryName:activeLibrary.title})} onBack={() => navigate('libraries')} onDocument={item => item.taskId ? openTask(item.taskId) : setPanel({ type: 'document', libraryId: activeLibrary.id, documentId: item.id })} onCompose={() => { setTargetId(activeLibrary.id); navigate('home') }} onRecords={() => setPanel({ type: 'records', libraryId: activeLibrary.id })} onAnalysis={() => setPanel({ type: 'analysis', libraryId: activeLibrary.id })}/> : <div className="empty-state"><h1>暂未找到这个知识库</h1><p>若已删除，可以回到书架，在回收站恢复。</p><button className="primary-button" onClick={() => navigate('libraries')}>回到书架<Icon name="arrow" size={18}/></button></div>)}
+          ) : <WelcomePage onStart={openStudy}/>)}
+          {route.destination === 'libraries' && (!route.libraryId ? <BookshelfPage libraries={libraries} loading={libraryRead.loading} error={libraryRead.error} onRetry={()=>void readLibraries()} deletedCount={deletedLibraries.length+removedItems.length} onTrash={()=>{setLibraryError('');setPanel({type:'trash'})}} onOpen={id => navigate('libraries', id)} onCreate={() => { setNameError('');setNewName('');setPanel({ type: 'create' }) }}/> : activeLibrary ? <LibraryDetailPage library={activeLibrary} onDelete={()=>{setLibraryError('');setPanel({type:'delete',libraryId:activeLibrary.id})}} onRename={()=>{setNameError('');setNewName(activeLibrary.title);setPanel({type:'rename',libraryId:activeLibrary.id})}} onRemoveItem={item=>manageItem({kind:item.study ? 'study' : item.taskId ? 'set' : 'source',id:item.taskId ?? item.id,label:item.title,libraryId:activeLibrary.id,libraryName:activeLibrary.title})} onBack={() => navigate('libraries')} onDocument={item => item.taskId ? openTask(item.taskId) : setPanel({ type: 'document', libraryId: activeLibrary.id, documentId: item.id })} onCompose={() => { setTargetId(activeLibrary.id); openStudy() }} onRecords={() => setPanel({ type: 'records', libraryId: activeLibrary.id })} onAnalysis={() => setPanel({ type: 'analysis', libraryId: activeLibrary.id })}/> : <div className="empty-state"><h1>{libraryRead.loading ? '正在读取知识库…' : libraryRead.error ? '暂时无法读取知识库' : '暂未找到这个知识库'}</h1>{libraryRead.error ? <button className="secondary-button" onClick={()=>void readLibraries()}>重新读取</button> : !libraryRead.loading && <p>若已删除，可以回到书架，在回收站恢复。</p>}<button className="primary-button" onClick={() => navigate('libraries')}>回到书架<Icon name="arrow" size={18}/></button></div>)}
           {route.destination === 'profile' && <ProfilePage settings={profile} libraries={libraries}
             onSave={changeProfile} onRecords={()=>setPanel({type:'records'})} onSettings={()=>setPanel({type:'settings'})}
             onOpenTask={openTask} onLibrary={id=>navigate('libraries',id)} onReview={prepareWeakPointReview}/>}
@@ -445,11 +474,15 @@ export function App() {
         {historyPath && !currentHistory && <p className="supporting" role="status">正在读取练习数据…</p>}
         {historyPath && currentHistory?.error && <p className="field-error" role="alert">{currentHistory.error}</p>}
         {panel.type === 'records' && currentHistory?.data && <><p className="sheet-description">{panelLibrary ? `${panelLibrary.title} · 最近练习` : '各知识库的最近练习'}</p><div className="example-records">{currentHistory.data.sessions.map(record => <div key={record.sessionId}><Icon name="clock" size={19}/><span><strong>{record.libraryName}</strong><small>{new Date(record.created * 1000).toLocaleString('zh-CN')}</small></span><b>答对 {record.correct}/{record.answered} 题</b><button className="archive-link record-return" onClick={()=>openTask(record.taskId)}>查看题目<Icon name="chevron" size={13}/></button></div>)}</div>{!currentHistory.data.sessions.length && <p className="supporting">完成一组练习后，记录会显示在这里。</p>}</>}
-        {panel.type === 'analysis' && currentHistory?.data && <><p className="sheet-description">{panelLibrary?.title} · 根据累计作答估计掌握情况</p><PointProgressList points={currentHistory.data.points}/></>}
+        {panel.type === 'analysis' && currentHistory?.data && <>
+          <p className="sheet-description">{panelLibrary?.title} · 根据累计作答估计掌握情况</p>
+          <PointProgressList points={currentHistory.data.points}/>
+          {panelLibrary && currentHistory.data.points.some(point => point.reviewPriority) &&
+            <button className="secondary-button" onClick={() => prepareWeakPointReview(panelLibrary.id)}>按薄弱点出题<Icon name="arrow" size={16}/></button>}
+        </>}
         {panel.type === 'overview' && <><p className="sheet-description">总览入口留在“我的”。具体知识点与学习建议，回到对应知识库查看。</p><div className="overview-libraries">{libraries.map(library => <button key={library.id} onClick={() => { navigate('libraries', library.id) }}><span className={`target-mark cover-${library.color}`}>{library.mark}</span><span><strong>{library.title}</strong><small>进入知识库查看学习分析</small></span><Icon name="chevron" size={16}/></button>)}</div><p className="prototype-note">当前不展示未经计算的掌握概率或整体学习结论。</p></>}
-        {panel.type === 'settings' && <><p className="sheet-description">让学习空间保持简单、清晰。</p><div className="settings-row"><span>外观</span><strong>手帐风 · 暖白与苔绿</strong></div><div className="settings-row"><span>学习数据</span><strong>{onlineTrial ? '保存在试用服务器' : '保存在本机'}</strong></div><p className="supporting">昵称与学习偏好保存在当前浏览器，练习记录来自当前学习空间。</p><button className="secondary-button" onClick={()=>setPanel({type:'demo'})}>使用说明</button><button className="secondary-button reset-demo" onClick={resetDemo}>清空出题草稿</button></>}
+        {panel.type === 'settings' && <><p className="sheet-description">让学习空间保持简单、清晰。</p><div className="settings-row"><span>外观</span><strong>森林文献馆</strong></div><div className="settings-row"><span>学习数据</span><strong>{onlineTrial ? '保存在试用服务器' : '保存在本机'}</strong></div><p className="supporting">昵称与学习偏好保存在当前浏览器，练习记录来自当前学习空间。</p><button className="secondary-button" onClick={()=>setPanel({type:'demo'})}>使用说明</button><button className="secondary-button reset-demo" onClick={resetDemo}>清空出题草稿</button></>}
       </Sheet>}
     </div></div>
-    <footer className="preview-footer">{onlineTrial ? '在线千问出题 · 卡片练习' : '本机千问出题 · 卡片练习'}</footer>
   </div>
 }

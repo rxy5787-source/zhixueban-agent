@@ -1,3 +1,4 @@
+import { learningStorageKey } from './learningAccount'
 export type ProfileSettings = {
   nickname: string
   learningGoal: string
@@ -16,7 +17,7 @@ export const DEFAULT_PROFILE: ProfileSettings = {
 
 export function loadProfileSettings(): ProfileSettings {
   try {
-    const value = JSON.parse(localStorage.getItem(KEY) ?? 'null')
+    const value = JSON.parse(localStorage.getItem(learningStorageKey(KEY)) ?? 'null')
     if (!value || typeof value !== 'object') return { ...DEFAULT_PROFILE }
     return {
       nickname: typeof value.nickname === 'string' && value.nickname.trim() ? value.nickname.trim().slice(0, 20) : DEFAULT_PROFILE.nickname,
@@ -31,7 +32,7 @@ export function loadProfileSettings(): ProfileSettings {
 }
 
 export function saveProfileSettings(value: ProfileSettings) {
-  localStorage.setItem(KEY, JSON.stringify(value))
+  localStorage.setItem(learningStorageKey(KEY), JSON.stringify(value))
 }
 
 export function preferredRequirements(text: string, settings: ProfileSettings, weakPoints: string[]) {

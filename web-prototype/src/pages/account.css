@@ -1,0 +1,91 @@
+.account-page {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: clamp(1rem, 4vw, 3rem);
+  background: #f4f4ed;
+  color: #283e34;
+}
+.account-shell {
+  width: min(100%, 64rem);
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: .65rem;
+  border: 1px solid #d9ddd2;
+  border-radius: 1.4rem;
+  background: #fffdf7;
+  box-shadow: 0 1rem 3rem #263c3310;
+  overflow: hidden;
+}
+.account-brand {
+  position: relative;
+  isolation: isolate;
+  min-height: 34rem;
+  border-radius: .9rem;
+  overflow: hidden;
+  padding: clamp(1.4rem, 4vw, 2.8rem);
+  background: #dce5d5;
+}
+.account-wordmark { font-size: 1.2rem; font-weight: 750; text-decoration: none; }
+.account-brand-copy { margin-top: 2rem; }
+.account-brand-copy strong { font-size: clamp(1.9rem, 3.4vw, 3rem); }
+.account-brand-copy p { margin: .55rem 0; color: #3f574a; }
+.account-landscape { position: absolute; z-index: -1; inset: 0; overflow: hidden; }
+.account-landscape i { position: absolute; display: block; }
+.account-sun { width: 25%; aspect-ratio: 1; right: 13%; top: 24%; border-radius: 50%; background: #f4efd5; }
+.account-landscape i:nth-child(2), .account-landscape i:nth-child(3) {
+  background: #a7b7a0; width: 76%; height: 64%; bottom: -23%; border-radius: 48% 58% 0 0;
+}
+.account-landscape i:nth-child(2) { left: -12%; transform: rotate(-16deg); }
+.account-landscape i:nth-child(3) { right: -20%; transform: rotate(15deg); }
+.account-landscape i:nth-child(4), .account-landscape i:nth-child(5) {
+  background: #7e9784; width: 77%; height: 49%; bottom: -22%; border-radius: 51% 56% 0 0;
+}
+.account-landscape i:nth-child(4) { left: -15%; transform: rotate(-13deg); }
+.account-landscape i:nth-child(5) { right: -19%; transform: rotate(13deg); }
+.account-landscape i:nth-child(6), .account-landscape i:nth-child(7) {
+  background: #4b6959; width: 86%; height: 37%; bottom: -24%; border-radius: 48% 57% 0 0;
+}
+.account-landscape i:nth-child(6) { left: -9%; transform: rotate(-9deg); }
+.account-landscape i:nth-child(7) { right: -22%; transform: rotate(9deg); }
+.account-panel { width: 100%; max-width: 33rem; padding: clamp(1.45rem, 4vw, 3.25rem); margin: auto; }
+.account-panel h1 { margin: 0 0 .35rem; font-size: clamp(1.85rem, 4vw, 2.55rem); }
+.account-subtitle { margin: 0 0 1.5rem; color: #5f7164; }
+.account-panel form, .account-panel label { display: grid; gap: .5rem; }
+.account-panel form { gap: 1rem; margin-block: 1rem; }
+.account-panel input, .account-panel textarea, .account-panel button {
+  min-height: 46px; border-radius: .55rem; border: 1px solid #bac7bb; padding: .6rem .85rem; font: inherit;
+}
+.account-panel input, .account-panel textarea { width: 100%; background: #fff; color: inherit; }
+.account-panel input:focus-visible, .account-panel button:focus-visible, .account-page a:focus-visible {
+  outline: 2px solid #436653; outline-offset: 2px;
+}
+.account-password { position: relative; }
+.account-password input { padding-inline-end: 4rem; }
+.account-password button {
+  position: absolute; inset: 1px 1px 1px auto; min-height: 42px; color: #425f4e; border: 0; background: transparent;
+}
+.account-panel button[type="submit"] { background: #365847; color: #fff; border-color: #365847; }
+.account-panel button:disabled { opacity: .55; }
+.account-panel [role="alert"] { color: #903328; margin: 0; }
+.account-page a { color: inherit; text-underline-offset: .2em; }
+.account-switch, .account-guest { text-align: center; display: block; margin: .9rem 0 0; }
+.account-switch a { font-weight: 700; margin-inline-start: .4rem; }
+.account-guest { color: #556c5e; font-size: .9rem; }
+.account-notes .account-panel { background: #fffdf7; border-radius: 1rem; }
+.account-actions, .learning-account-actions { display: flex; align-items: center; flex-wrap: wrap; gap: .55rem; }
+.learning-account-actions a, .learning-account-actions button {
+  color: inherit; border: 1px solid #c8d2c8; border-radius: .55rem; padding: .4rem .55rem; background: transparent; font: inherit;
+}
+@media (max-width: 680px) {
+  .account-page { padding: .65rem; }
+  .account-shell { grid-template-columns: minmax(0, 1fr); padding: 0; border-radius: 1.1rem; }
+  .account-brand { min-height: 10rem; padding: 1rem 1.4rem; border-radius: 0; }
+  .account-brand-copy { margin-top: .8rem; }
+  .account-brand-copy strong { font-size: 1.6rem; }
+  .account-brand-copy p { display: none; }
+  .account-sun { width: 16%; top: 15%; }
+  .account-panel { padding: 1.25rem 1.4rem 1.5rem; }
+  .learning-account-actions { gap: .25rem; }
+  .learning-account-actions a, .learning-account-actions button { font-size: .75rem; }
+}

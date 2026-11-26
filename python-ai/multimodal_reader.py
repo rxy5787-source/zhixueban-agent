@@ -355,7 +355,7 @@ def read_multimodal_file(path: Path, automatic_only: bool = False) -> list[dict]
     from backend.file_storage import validate_file
     validate_file(path, path.name)
     suffix = path.suffix.lower()
-    print(f"\n解析：{path.name}")
+    print("正在解析资料。")
     if suffix in {".jpg", ".jpeg", ".png", ".bmp", ".webp"}:
         if automatic_only:
             section = _section('', '原始图片', False, True)

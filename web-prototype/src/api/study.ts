@@ -1,3 +1,4 @@
+import { learningStorageKey } from './learningAccount'
 import { api } from './generation'
 
 export type StudyKind = 'single_choice' | 'mnemonic' | 'cloze' | 'reply'
@@ -30,7 +31,7 @@ export function studyIntent(text: string, previous?: StudyKind): StudyKind {
 
 export function readStudyThread(): StudyTurn[] {
   try {
-    const value = JSON.parse(sessionStorage.getItem(THREAD_KEY) ?? '[]')
+    const value = JSON.parse(sessionStorage.getItem(learningStorageKey(THREAD_KEY)) ?? '[]')
     return Array.isArray(value) ? value.filter(item =>
       item && typeof item.id === 'string' && /^[a-f0-9]{32}$/.test(item.id) &&
       typeof item.requirement === 'string' && typeof item.libraryId === 'string' &&
@@ -40,7 +41,7 @@ export function readStudyThread(): StudyTurn[] {
 }
 
 export function storeStudyThread(turns: StudyTurn[]) {
-  try { sessionStorage.setItem(THREAD_KEY, JSON.stringify(turns)) } catch { /* Keep the thread in memory. */ }
+  try { sessionStorage.setItem(learningStorageKey(THREAD_KEY), JSON.stringify(turns)) } catch { /* Keep the thread in memory. */ }
 }
 
 let pending: { signature: string; id: string } | undefined
@@ -48,17 +49,17 @@ export async function continueStudy(parentId: string, requirement: string, kind:
   const fields = { parentId, requirement, kind, questionCount }
   const signature = JSON.stringify(fields)
   try {
-    const saved = JSON.parse(sessionStorage.getItem(REQUEST_KEY) ?? 'null')
+    const saved = JSON.parse(sessionStorage.getItem(learningStorageKey(REQUEST_KEY)) ?? 'null')
     if (saved?.signature === signature && typeof saved.id === 'string') pending = saved
   } catch { /* In-memory retries also reuse the request ID. */ }
   if (pending?.signature !== signature) pending = { signature, id: crypto.randomUUID() }
   const requestId = pending.id
-  try { sessionStorage.setItem(REQUEST_KEY, JSON.stringify(pending)) } catch { /* Keep in-memory state. */ }
+  try { sessionStorage.setItem(learningStorageKey(REQUEST_KEY), JSON.stringify(pending)) } catch { /* Keep in-memory state. */ }
   const result = await api<{ taskId: string; status: string }>('/api/study-turns', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ...fields, requestId }),
   })
   pending = undefined
-  try { sessionStorage.removeItem(REQUEST_KEY) } catch { /* The server already accepted the turn. */ }
+  try { sessionStorage.removeItem(learningStorageKey(REQUEST_KEY)) } catch { /* The server already accepted the turn. */ }
   return result
 }

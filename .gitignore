@@ -1,5 +1,7 @@
 **/node_modules/
 **/dist/
+/web-prototype/dist-pages/
+/web-prototype/dist-offline/
 **/build/
 **/.gradle/
 **/.idea/

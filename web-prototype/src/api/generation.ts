@@ -1,3 +1,4 @@
+import { applyLearningUploadHeaders, learningFetch, learningStorageKey } from './learningAccount'
 import { onlineTrial } from '../deployment'
 import { sha256, uploadInChunks } from './resumable'
 import type { StudyKind, StudyOutput } from './study'
@@ -6,7 +7,7 @@ export type Question = {
   id: string; libraryId: string; prompt: string; options: string[]; answer: string
   explanation: string; points: string[]; difficulty: number; qualityStatus: string
   visualValidationLimit: string
-  ai: { sourceFile: string; sourceLocation: string; extraction: string; generationModel: string; reviewModel: string }
+  ai: { sourceFile: string; sourceLocation: string; evidenceQuote?: string; extraction: string; generationModel: string; reviewModel: string }
 }
 export type ExamTopic = 'mixed' | 'complement' | 'overflow' | 'floating' | 'graph' | 'cache'
 export type GenerationTask = {
@@ -15,6 +16,7 @@ export type GenerationTask = {
   generatedQuestionCount: number; acceptedQuestionCount: number; requestedQuestionCount: number
   savedQuestionCount: number
   availableQuestions?: Question[]; filteredQuestionCount?: number; created?: number; updated?: number
+  coverage?: { label: string; requested: number; accepted: number; sources: string[]; reason: string }[]
   study?: { kind: Exclude<StudyKind, 'single_choice'>; saved: boolean; hidden: boolean; result: StudyOutput | null } | null
   libraryDeleted?: boolean
   examPractice?: { topic: ExamTopic; label: string; reference: string } | null
@@ -45,12 +47,12 @@ async function errorText(response: Response) {
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   let response: Response
   try {
-    response = await fetch(path, options)
+    response = await learningFetch(path, options)
     const retries = onlineTrial && (options.method ?? 'GET').toUpperCase() === 'GET' ? 4 : 0
     for (let attempt = 0; response.status === 530 && attempt < retries; attempt++) {
       await new Promise<void>(resolve => window.setTimeout(resolve, (attempt + 1) * 2000))
       options.signal?.throwIfAborted()
-      response = await fetch(path, options)
+      response = await learningFetch(path, options)
     }
   }
   catch (error) { if (options.signal?.aborted) throw error; throw new Error(onlineTrial ? '无法连接在线出题服务，请检查网络或稍后重试。' : '无法连接本机出题服务，请确认 Python 服务在 8091 端口运行。') }
@@ -64,7 +66,7 @@ let pendingSubmission: PendingSubmission | null = null
 
 export function clearPendingSubmission() {
   pendingSubmission = null
-  try { localStorage.removeItem(SUBMISSION_KEY); sessionStorage.removeItem(SUBMISSION_KEY) } catch { /* Browser storage may be disabled. */ }
+  try { localStorage.removeItem(learningStorageKey(SUBMISSION_KEY)); sessionStorage.removeItem(learningStorageKey(SUBMISSION_KEY)) } catch { /* Browser storage may be disabled. */ }
 }
 
 async function uploadSubmission(files: File[], fields: Record<string,string>) {
@@ -73,19 +75,19 @@ async function uploadSubmission(files: File[], fields: Record<string,string>) {
   const signature = JSON.stringify([Object.entries(fields).sort(), files.map((file, index) => [file.name, file.size, hashes[index]])])
   const previousSignature = JSON.stringify([Object.entries(fields).sort(), files.map(file => [file.name, file.size, file.lastModified])])
   try {
-    const stored = JSON.parse(localStorage.getItem(SUBMISSION_KEY) ?? sessionStorage.getItem(SUBMISSION_KEY) ?? 'null') as PendingSubmission | null
+    const stored = JSON.parse(localStorage.getItem(learningStorageKey(SUBMISSION_KEY)) ?? sessionStorage.getItem(learningStorageKey(SUBMISSION_KEY)) ?? 'null') as PendingSubmission | null
     if (stored && [signature, previousSignature].includes(stored.signature) && /^[a-f0-9]{32}$/.test(stored.id)) {
       pendingSubmission = { signature, id: stored.id }
     }
   } catch { /* A blocked browser store still allows recovery within this page. */ }
   const repeated = pendingSubmission?.signature === signature
   if (!repeated) pendingSubmission = { signature, id: crypto.randomUUID().replaceAll('-', '') }
-  try { localStorage.setItem(SUBMISSION_KEY, JSON.stringify(pendingSubmission)) } catch { /* Keep the in-memory receipt. */ }
+  try { localStorage.setItem(learningStorageKey(SUBMISSION_KEY), JSON.stringify(pendingSubmission)) } catch { /* Keep the in-memory receipt. */ }
   return { id: pendingSubmission!.id, repeated, hashes }
 }
 
 async function lookupSubmission(id: string): Promise<TaskReceipt | null> {
-  const response = await fetch(`/api/generation-submissions/${id}`, { signal: AbortSignal.timeout(6000) })
+  const response = await learningFetch(`/api/generation-submissions/${id}`, { signal: AbortSignal.timeout(6000) })
   if (response.status === 404) return null
   if (!response.ok) throw new ApiHttpError(await errorText(response), response.status)
   return await response.json() as TaskReceipt
@@ -122,6 +124,7 @@ function submitLocalTask(files: File[], fields: Record<string,string>, onProgres
     Object.entries(fields).forEach(([name,value]) => form.append(name,value))
     const request = new XMLHttpRequest()
     request.open('POST','/api/generation-tasks')
+    applyLearningUploadHeaders(request)
     request.timeout=15 * 60 * 1000
     const started = performance.now()
     request.upload.onprogress=event => {

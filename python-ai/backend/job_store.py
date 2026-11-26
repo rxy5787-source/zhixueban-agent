@@ -4,6 +4,8 @@ import time
 import uuid
 from contextlib import contextmanager
 from .config import DATA
+from .job_timing import phase_from_stage
+from .observability import event
 
 class Store:
     def __init__(self, root=DATA):
@@ -18,6 +20,8 @@ class Store:
             CREATE TABLE IF NOT EXISTS jobs(id TEXT PRIMARY KEY,owner TEXT NOT NULL,state TEXT NOT NULL,stage TEXT NOT NULL,request TEXT NOT NULL,result TEXT NOT NULL,error TEXT NOT NULL,cancel INTEGER NOT NULL DEFAULT 0,created REAL NOT NULL,updated REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS job_events(id INTEGER PRIMARY KEY,job_id TEXT NOT NULL,state TEXT NOT NULL,stage TEXT NOT NULL,created REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS events_job ON job_events(job_id,id);
+            CREATE TABLE IF NOT EXISTS job_archive_metrics(
+                job_id TEXT PRIMARY KEY, callback_elapsed_ms INTEGER NOT NULL, created REAL NOT NULL);
             CREATE INDEX IF NOT EXISTS jobs_owner ON jobs(owner,created);
             CREATE TABLE IF NOT EXISTS model_call(id INTEGER PRIMARY KEY,job_id TEXT NOT NULL,phase TEXT NOT NULL,response TEXT NOT NULL,created REAL NOT NULL);
             """)
@@ -32,6 +36,11 @@ class Store:
         finally:db.close()
     def record_call(self, job_id, phase, response):
         with self.db() as db:db.execute('INSERT INTO model_call(job_id,phase,response,created) VALUES(?,?,?,?)',(job_id,phase,json.dumps(response,ensure_ascii=False),time.time()))
+        phase_name = {'generation': 'generation', 'batch_review': 'quality', 'review': 'quality',
+                      'knowledge': 'knowledge', 'vision': 'parsing'}.get(phase, 'other')
+        duration = response.get('total_duration') if isinstance(response, dict) else None
+        elapsed = duration / 1_000_000 if type(duration) in (int, float) else None
+        event('model_call', job_id=job_id, phase=phase_name, elapsed_ms=elapsed)
     def add_file(self, owner, name, digest, size, path):
         ident = uuid.uuid4().hex
         with self.db() as db:
@@ -60,13 +69,18 @@ class Store:
             db.execute('BEGIN IMMEDIATE')
             row=db.execute("SELECT id FROM jobs WHERE state='queued' ORDER BY created LIMIT 1").fetchone()
             if not row:return None
-            db.execute("UPDATE jobs SET state='running',stage='准备解析',updated=? WHERE id=?",(time.time(),row['id']))
+            now = time.time()
+            db.execute("UPDATE jobs SET state='running',stage='准备解析',updated=? WHERE id=?",(now,row['id']))
+            db.execute('INSERT INTO job_events(job_id,state,stage,created) VALUES(?,?,?,?)',
+                       (row['id'], 'running', '准备解析', now))
+        event('claimed', job_id=row['id'], state='running', phase='preparation')
         return self.get(row['id'])
     def recent(self, owner):
         with self.db() as db:
             rows=db.execute('SELECT id,state,stage,request,updated FROM jobs WHERE owner=? ORDER BY created DESC LIMIT 20',(owner,)).fetchall()
         return [{'jobId':r['id'],'state':r['state'],'stage':r['stage'],'libraryName':json.loads(r['request']).get('libraryName',''),'updated':r['updated']} for r in rows]
     def update(self, ident, state, stage, result=None, error=''):
+        callback_ms = None
         with self.db() as db:
             now=time.time()
             # A child that survives a server crash must not overwrite recovery.
@@ -80,8 +94,17 @@ class Store:
             if not updated.rowcount:
                 return
             if result is not None:
+                started = time.perf_counter_ns()
                 self.publish_result(db,ident,state,result,now)
+                if state in ('succeeded', 'partial') and type(self).publish_result is not Store.publish_result:
+                    callback_ms = max(0, (time.perf_counter_ns() - started) // 1_000_000)
+                    db.execute('''INSERT INTO job_archive_metrics VALUES(?,?,?)
+                        ON CONFLICT(job_id) DO UPDATE SET callback_elapsed_ms=excluded.callback_elapsed_ms,
+                        created=excluded.created''', (ident, callback_ms, now))
             db.execute('INSERT INTO job_events(job_id,state,stage,created) VALUES(?,?,?,?)',(ident,state,stage,now))
+        event('checkpoint', job_id=ident, state=state, phase=phase_from_stage(stage))
+        if callback_ms is not None:
+            event('archive', job_id=ident, state=state, phase='archive', elapsed_ms=callback_ms)
     def publish_result(self, db, ident, state, result, now):
         """Allow a store to publish its result in the same transaction."""
     def cancel(self, ident, owner):

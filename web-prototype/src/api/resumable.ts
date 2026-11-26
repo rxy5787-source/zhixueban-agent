@@ -1,3 +1,4 @@
+import { learningFetch } from './learningAccount'
 type Receipt = { taskId: string; status: string }
 type UploadStatus = { offsets: number[]; chunkBytes: number; receipt: Receipt | null }
 
@@ -23,7 +24,7 @@ async function pause(milliseconds: number) {
 async function request<T>(path: string, options: RequestInit, onDetail?: (detail: string) => void): Promise<T> {
   for (let attempt = 0; attempt < 6; attempt++) {
     try {
-      const response = await fetch(path, { ...options, signal: AbortSignal.timeout(60000) })
+      const response = await learningFetch(path, { ...options, signal: AbortSignal.timeout(60000) })
       if (!response.ok) {
         let detail = `上传服务暂时无法连接（HTTP ${response.status}）`
         try { const data = await response.json(); if (typeof data.detail === 'string') detail = data.detail } catch { /* The tunnel may return HTML. */ }

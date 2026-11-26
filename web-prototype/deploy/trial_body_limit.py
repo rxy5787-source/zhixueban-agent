@@ -18,7 +18,7 @@ class RequestBodyLimit:
         limit = self.limit if scope['path'] == '/api/generation-tasks' else 128 * 1024
         if scope['path'].startswith('/api/resumable-uploads/') and '/files/' in scope['path']:
             limit = 256 * 1024
-        if scope['path'] == '/trial-access':
+        if scope['path'] in {'/trial-access', '/api/account/login', '/api/account/register'}:
             limit = 4096
         length = dict(scope['headers']).get(b'content-length')
         if length is not None and (not length.isdigit() or len(length) > 10 or int(length) > limit):
