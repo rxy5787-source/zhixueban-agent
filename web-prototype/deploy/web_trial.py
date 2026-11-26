@@ -404,6 +404,14 @@ def create_app(data_root, frontend, origin, secret, maximum_spaces=32, *, start_
     def favicon():
         return FileResponse(frontend / 'favicon.svg')
 
+    @app.get('/api/evaluation-preflight')
+    def evaluation_preflight(request: Request):
+        if not local_preview or request.client is None or request.client.host not in {'127.0.0.1', '::1'}:
+            raise HTTPException(404)
+        if existing_space(request) is None:
+            raise HTTPException(401, '本地评测会话无效')
+        return {'localPreview': True, **generation_readiness()}
+
     @app.get('/api/generation-tasks/{ident}/timing')
     def task_timing(ident: str):
         # Middleware selects a verified Store; task() checks resource ownership.

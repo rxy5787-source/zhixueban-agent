@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from backend import web_api
 from backend.web_trial import TrialStore, create_app
+from backend import web_trial
 
 ORIGIN = 'https://harness.test'
 SECRET = 'harness-test-secret-' * 3
@@ -22,6 +23,24 @@ def application(tmp_path):
     (frontend / 'assets').mkdir(parents=True, exist_ok=True)
     (frontend / 'index.html').write_text('<title>Harness test</title>')
     return create_app(tmp_path / 'data', frontend, ORIGIN, SECRET, start_worker=False)
+
+
+def test_evaluation_preflight_only_with_verified_loopback_session(tmp_path, monkeypatch):
+    target = '/api/evaluation-preflight'
+    public = TestClient(application(tmp_path), base_url=ORIGIN, client=('127.0.0.1', 8000))
+    assert public.get('/').status_code == 200
+    assert public.get(target).status_code == 404
+    local_origin = 'http://127.0.0.1:18362'
+    app = create_app(tmp_path / 'local', tmp_path / 'public', local_origin, SECRET,
+                     start_worker=False, local_preview=True)
+    monkeypatch.setattr(web_trial, 'generation_readiness', lambda: {'generationReady': True})
+    local = TestClient(app, base_url=local_origin, client=('127.0.0.1', 8000))
+    assert local.get(target).status_code == 401
+    assert local.get('/').status_code == 200
+    assert local.get(target).json() == {'localPreview': True, 'generationReady': True}
+    other = TestClient(app, base_url=local_origin, client=('192.0.2.1', 8000))
+    other.cookies.update(local.cookies)
+    assert other.get(target).status_code == 404
 
 
 def test_timing_requires_current_space_and_does_not_leak_raw_stages(tmp_path):

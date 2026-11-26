@@ -55,4 +55,4 @@ jobs:
           $env:PYTHONPATH = Join-Path $package 'server'
           python -m pytest -q web-prototype/deploy/test_web_trial.py web-prototype/deploy/test_harness_boundary.py web-prototype/deploy/test_study_tools.py
           $env:PYTHONPATH = $null
-          python -m pytest -q python-ai/test_harness_baseline.py python-ai/test_account_space.py python-ai/test_agent_api.py python-ai/test_practice_coverage.py python-ai/test_web_question_review.py
+          python -m pytest -q python-ai/test_harness_baseline.py python-ai/test_account_space.py python-ai/test_agent_api.py python-ai/test_practice_coverage.py python-ai/test_web_question_review.py python-ai/evaluation/test_zh06.py

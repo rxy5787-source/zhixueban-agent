@@ -18,6 +18,8 @@ def test_scope_with_explicit_quota_and_three_sources_does_not_reallocate_missing
 
 def test_each_and_natural_coverage_allocate_per_topic():
     assert named_topics('请用英文出1道单选题，考查WHERE，面向初学者。') == {'WHERE': None}
+    assert named_topics('请根据资料生成一道四选一单选题：按部门分组前先排除某些原始记录，应选哪个子句？') == {}
+    assert named_topics('请根据资料生成一道四选一单选题：考查 WHERE 的作用。') == {'WHERE': None}
     assert named_topics('DNS 和 SQL 各出一道题') == {'DNS': 1, 'SQL': 1}
     assert named_topics('SQL 的 WHERE 和 HAVING 各出一道题') == {'WHERE': 1, 'HAVING': 1}
     assert named_topics('生成两道单选题。请覆盖 DNS 查询和 SQL 筛选，按原文出题。') == {'DNS': None, 'SQL': None}

@@ -34,7 +34,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Harness baseline failed; inspect pytest.xml' }
     $env:PYTHONPATH = $oldPythonPath
     $unitReport = Join-Path $verification 'unit.xml'
-    & $python -m pytest -q python-ai/test_harness_baseline.py python-ai/test_account_space.py python-ai/test_agent_api.py python-ai/test_practice_coverage.py python-ai/test_web_question_review.py "--junitxml=$unitReport"
+    & $python -m pytest -q python-ai/test_harness_baseline.py python-ai/test_account_space.py python-ai/test_agent_api.py python-ai/test_practice_coverage.py python-ai/test_web_question_review.py python-ai/evaluation/test_zh06.py "--junitxml=$unitReport"
     if ($LASTEXITCODE -ne 0) { throw 'Harness unit baseline failed; inspect unit.xml' }
     if ($WithAccounts) {
         & ./tools/test-web-account.ps1
