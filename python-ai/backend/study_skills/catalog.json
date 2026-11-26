@@ -1,0 +1,5 @@
+{
+  "adaptive_practice": "根据实际作答证据选择诊断、薄弱点练习或复习",
+  "question_generation": "从资料生成范围明确且有证据的候选题",
+  "question_review": "检查候选题的原文依据、答案唯一性和重复情况"
+}

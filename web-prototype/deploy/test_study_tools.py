@@ -155,6 +155,20 @@ def test_agent_feedback_and_turn_limit(scope):
     assert run_agent('学习建议', scope, registry, Model(), cancelled=lambda: True).status == 'cancelled'
 
 
+def test_skill_catalog_only_advertises_summaries_and_loads_on_demand(scope):
+    registry = study_tools.study_registry()
+    assert registry.execute(scope, 'load_study_skill', {'name': 'adaptive_practice'}).code == 'tool_not_allowed'
+    granted = replace(scope, capabilities=frozenset({'skill:read'}))
+    catalog = registry.catalog(granted)
+    assert [item['name'] for item in catalog] == ['load_study_skill']
+    assert '掌握估计来自已有作答' not in catalog[0]['description']
+    result = registry.execute(granted, 'load_study_skill', {'name': 'adaptive_practice'})
+    assert result.status == 'ok' and '掌握估计来自已有作答' in result.data['instructions']
+    assert len(result.data['version']) == 64
+    assert registry.execute(granted, 'load_study_skill', {'name': '../uploads'}).code == 'invalid_arguments'
+    assert registry.execute(granted, 'read_progress', {}).code == 'tool_not_allowed'
+
+
 def test_agent_does_not_dispatch_unknown_tools_or_retry_bad_model_output_forever(scope):
     class Unknown:
         def decide(self, messages, timeout):

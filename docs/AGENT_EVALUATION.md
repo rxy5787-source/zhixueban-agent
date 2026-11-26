@@ -49,3 +49,9 @@
 2026-11-26 使用 `./tools/test-agent-harness.ps1` 执行本阶段。打包测试 34 项通过，2 项真实模型用例按开关跳过，源码测试 46 项通过，Web 构建和依赖检查通过。两组均保留已知的 Starlette 弃用警告。报告目录 `.verification/harness-7a113edadf8840dbb4c0b5d1081ebfef/`。
 
 测试从已保存的工具结果恢复同一任务，验证旧尝试、取消和异主访问的拒绝。中断由确定性测试触发。完整用户入口上的进程中断与归档恢复留待集成阶段。
+
+## Phase 05
+
+2026-11-26 使用 `./tools/test-agent-harness.ps1`。打包测试 **35 passed / 2 skipped**，源码测试 **46 passed**，Web 构建与依赖检查通过。跳过的两项为 Phase 03 的本地 Ollama 用例。报告目录 `.verification/harness-f739448c1cb746eba9e9a2a792e3c4d1/`。
+
+打包后的独立进程验证了摘要发现、按名称读取正文和内容哈希，并检查越界名称、缺少授权及教学策略未扩大工具权限。模型在 Web 流程中的选择留待集成验证。

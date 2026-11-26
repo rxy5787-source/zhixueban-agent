@@ -36,7 +36,7 @@ try {
     }
     $backendFiles = '__init__.py', 'account_space.py', 'account_web.py', 'agent_api.py', 'agent_journal.py', 'agent_loop.py', 'config.py', 'content_exporter.py', 'exam_practice.py', 'file_storage.py',
         'job_store.py', 'job_timing.py', 'observability.py', 'knowledge_extractor.py', 'literal_evidence.py', 'model_status.py', 'practice_coverage.py', 'practice_quality.py', 'practice_variety.py',
-        'schemas.py', 'study_tools.py', 'tool_registry.py', 'web_api.py', 'web_content.py', 'web_practice.py', 'web_question_review.py', 'worker.py'
+        'schemas.py', 'study_skills.py', 'study_tools.py', 'tool_registry.py', 'web_api.py', 'web_content.py', 'web_practice.py', 'web_question_review.py', 'worker.py'
     foreach ($name in $backendFiles) {
         $source = Join-Path $pythonRoot "backend/$name"
         $destination = Join-Path $stage "server/backend/$name"
@@ -46,6 +46,7 @@ try {
             Copy-Item -LiteralPath $source -Destination $destination
         }
     }
+    Copy-Item -LiteralPath (Join-Path $pythonRoot 'backend/study_skills') -Destination (Join-Path $stage 'server/backend') -Recurse
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'web_trial.py') -Destination (Join-Path $stage 'server/backend')
     foreach ($name in 'trial_body_limit.py', 'trial_access.html', 'web_submissions.py', 'resumable_uploads.py', 'study_chat.py', 'study_mnemonics.py') {
         Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $stage 'server/backend')

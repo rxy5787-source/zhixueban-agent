@@ -232,6 +232,8 @@ def review_practice(context, args):
 
 
 def study_registry() -> ToolRegistry:
+    from .study_skills import skill_tool
+
     registry = ToolRegistry()
     for spec in (
         ToolSpec('parse_material', '读取当前任务资料的可用文字。', MaterialArgs, ParseResult,
@@ -246,4 +248,5 @@ def study_registry() -> ToolRegistry:
                  'practice:review', 240, review_practice),
     ):
         registry.register(spec)
+    registry.register(skill_tool())
     return registry
