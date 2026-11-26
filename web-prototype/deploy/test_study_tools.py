@@ -11,6 +11,7 @@ from backend.study_tools import ReviewArgs, TopicArgs, GenerateArgs
 from backend import study_tools
 from backend.tool_registry import Contract, ToolContext, ToolRegistry, ToolSpec
 from backend.agent_loop import OllamaModel, run_agent
+from backend.agent_context import project_messages
 from backend.agent_journal import AgentJournal, JournalConflict
 
 
@@ -167,6 +168,63 @@ def test_skill_catalog_only_advertises_summaries_and_loads_on_demand(scope):
     assert len(result.data['version']) == 64
     assert registry.execute(granted, 'load_study_skill', {'name': '../uploads'}).code == 'invalid_arguments'
     assert registry.execute(granted, 'read_progress', {}).code == 'tool_not_allowed'
+
+
+def test_late_source_evidence_is_found_before_the_preview_budget(scope):
+    source = scope.root / 'uploads' / 'source.txt'
+    quote = 'HAVING 按条件筛选分组后的聚合结果。'
+    source.write_text('WHERE 按条件筛选原始数据行。\n' * 600 + quote, encoding='utf-8')
+    file_id = next(iter(scope.file_ids))
+    registry = study_tools.study_registry()
+    preview = registry.execute(scope, 'parse_material', {'fileId': file_id})
+    assert preview.data['limited'] and quote not in ''.join(preview.data['sections'])
+    result = registry.execute(scope, 'parse_material', {'fileId': file_id, 'topic': 'HAVING'})
+    assert result.data['sections'] == [quote]
+    assert registry.execute(scope, 'parse_material', {'fileId': file_id, 'topic': 'ABSENT'}).code == 'insufficient_evidence'
+
+
+def test_context_projects_history_without_changing_the_original_evidence():
+    def pair(tool, result):
+        return [{'role': 'assistant', 'content': json.dumps({
+            'tool': tool, 'arguments': {'fileId': 'a' * 32, 'topic': 'HAVING'}})},
+                {'role': 'user', 'content': json.dumps({'toolResult': {'status': 'ok', 'data': result}})}]
+
+    initial = [{'role': 'system', 'content': 'Rules'}, {'role': 'user', 'content': 'Goal'}]
+    old_preview = pair('parse_material', {'sections': ['旧资料。' * 300]})
+    approved = pair('review_practice', {'evidenceQuote': 'HAVING 按条件筛选分组后的聚合结果。'})
+    newest = pair('read_progress', {'observations': 3})
+    history = initial + old_preview + approved + newest
+    projected = project_messages(history, limit=1300)
+    assert projected[:2] == initial and projected[-4:] == approved + newest
+    assert json.loads(projected[2]['content'])['earlierTools'][0]['topic'] == 'HAVING'
+    assert history[2:4] == old_preview
+    assert project_messages(history, limit=40) is None
+
+
+def test_agent_continues_after_several_large_previews(scope):
+    from backend.tool_registry import ToolResult
+
+    ident = next(iter(scope.file_ids))
+    calls = []
+    class LargePreviews:
+        def catalog(self, context):
+            return [{'name': 'parse_material'}]
+        def execute(self, context, name, args, **options):
+            calls.append(args['fileId'])
+            return ToolResult(status='ok', data={'sections': ['原文。' * 1550], 'limited': True})
+
+    class Model:
+        def decide(self, messages, timeout):
+            if len(calls) == 3:
+                assert sum(len(m['content'].encode('utf-8')) for m in messages) <= 28_000
+                assert json.loads(messages[2]['content'])['earlierTools'][0]['fileId'] == ident
+                assert '原文。' in messages[-1]['content']
+                return {'action': 'finish', 'tool': '', 'arguments': {}, 'message': '已读。'}
+            return {'action': 'call_tool', 'tool': 'parse_material', 'arguments': {'fileId': ident}, 'message': ''}
+
+    result = run_agent('读取资料', scope, LargePreviews(), Model())
+    assert result.status == 'proposed_finish'
+    assert len(result.trace) == 3
 
 
 def test_agent_does_not_dispatch_unknown_tools_or_retry_bad_model_output_forever(scope):

@@ -128,7 +128,7 @@ def _automatic_image(raw, location, cache_dir, vision_fallback):
         return section
 
 
-def iter_automatic_sections(path, cache_dir=None, on_progress=None, vision_fallback=False):
+def iter_automatic_sections(path, cache_dir=None, on_progress=None, vision_fallback=False, *, pdf_page_limit=MAX_PDF_PAGES):
     """Read lazily: reaching the target or cancelling never OCRs remaining pages."""
     path = Path(path)
     from backend.file_storage import validate_file
@@ -136,7 +136,7 @@ def iter_automatic_sections(path, cache_dir=None, on_progress=None, vision_fallb
     progress = on_progress or (lambda stage: None)
     if path.suffix.lower() == '.pdf':
         with pymupdf.open(str(path)) as pdf:
-            for index in range(min(len(pdf), MAX_PDF_PAGES)):
+            for index in range(min(len(pdf), pdf_page_limit)):
                 location = f'PDF第{index+1}页'
                 text = pdf[index].get_text('text', sort=True).strip()
                 if len(text) >= 40:
@@ -152,7 +152,7 @@ def iter_automatic_sections(path, cache_dir=None, on_progress=None, vision_fallb
                     except Exception as exc:
                         section = _section('', location)
                         section.update(extraction='ocr', parsingError=f'文字识别失败：{str(exc)[:200]}')
-                section.update(page=index+1, pagesAvailable=len(pdf), pagesLimit=MAX_PDF_PAGES)
+                section.update(page=index+1, pagesAvailable=len(pdf), pagesLimit=pdf_page_limit)
                 yield section
     elif path.suffix.lower() in {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}:
         progress('正在识别图片文字')

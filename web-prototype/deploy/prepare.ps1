@@ -34,7 +34,7 @@ try {
     foreach ($name in 'requirements.txt', 'generate_from_file.py', 'multimodal_reader.py', 'automatic_question_validator.py') {
         Copy-Item -LiteralPath (Join-Path $pythonRoot $name) -Destination (Join-Path $stage 'server')
     }
-    $backendFiles = '__init__.py', 'account_space.py', 'account_web.py', 'agent_api.py', 'agent_journal.py', 'agent_loop.py', 'config.py', 'content_exporter.py', 'exam_practice.py', 'file_storage.py',
+    $backendFiles = '__init__.py', 'account_space.py', 'account_web.py', 'agent_api.py', 'agent_context.py', 'agent_journal.py', 'agent_loop.py', 'config.py', 'content_exporter.py', 'exam_practice.py', 'file_storage.py',
         'job_store.py', 'job_timing.py', 'observability.py', 'knowledge_extractor.py', 'literal_evidence.py', 'model_status.py', 'practice_coverage.py', 'practice_quality.py', 'practice_variety.py',
         'schemas.py', 'study_skills.py', 'study_tools.py', 'tool_registry.py', 'web_api.py', 'web_content.py', 'web_practice.py', 'web_question_review.py', 'worker.py'
     foreach ($name in $backendFiles) {

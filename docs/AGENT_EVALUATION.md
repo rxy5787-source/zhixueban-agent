@@ -55,3 +55,11 @@
 2026-11-26 使用 `./tools/test-agent-harness.ps1`。打包测试 **35 passed / 2 skipped**，源码测试 **46 passed**，Web 构建与依赖检查通过。跳过的两项为 Phase 03 的本地 Ollama 用例。报告目录 `.verification/harness-f739448c1cb746eba9e9a2a792e3c4d1/`。
 
 打包后的独立进程验证了摘要发现、按名称读取正文和内容哈希，并检查越界名称、缺少授权及教学策略未扩大工具权限。模型在 Web 流程中的选择留待集成验证。
+
+## Phase 06
+
+2026-11-26 使用 `./tools/test-agent-harness.ps1`。打包 **37 passed / 2 skipped**，源码 **46 passed**，Web 构建与依赖检查通过。报告目录 `.verification/harness-6877cc803de248d88fe1b46f04af2f6c/`。
+
+使用同一打包目录中的 server 设置 `PYTHONPATH`，单独执行 `python -m pytest -q web-prototype/deploy/test_study_tools.py -k several_large_previews`，**1 passed**。三个大型返回值使原始 Transcript 超预算，模型替身仍收到有界消息，并能保留最新证据与旧资料定位参数。
+
+使用 `ZHIXUE_TEST_LIVE_AGENT=1` 和本机 `qwen3:1.7b` 执行 `python -m pytest -q -s web-prototype/deploy/test_study_tools.py -k live_qwen`，**2 passed**。这两项实测覆盖学情查询和原文问答兼容性。长资料尾部检索及历史压缩另由确定性回归覆盖。检索目前依赖考点词匹配，PDF 范围及 OCR 受运行时预算限制。

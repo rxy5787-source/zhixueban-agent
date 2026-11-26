@@ -12,6 +12,7 @@ from pydantic import Field, JsonValue, ValidationError, model_validator
 import requests
 
 from . import config
+from .agent_context import project_messages
 from .agent_journal import JournalConflict
 from .tool_registry import Contract, ToolContext, ToolRegistry
 
@@ -158,10 +159,14 @@ def run_agent(goal: str, context: ToolContext, registry: ToolRegistry, model, *,
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             return result('budget_exhausted', 'deadline')
-        if sum(len(entry['content'].encode('utf-8')) for entry in messages) > 28_000:
-            return result('budget_exhausted', 'context_limit')
         try:
-            proposal = pending if pending is not None else model.decide(messages, min(remaining, 120))
+            if pending is not None:
+                proposal = pending
+            else:
+                visible = project_messages(messages)
+                if visible is None:
+                    return result('budget_exhausted', 'context_limit')
+                proposal = model.decide(visible, min(remaining, 120))
             decision = Decision.model_validate(proposal)
         except (OllamaDecisionError, ValidationError) as exc:
             code = exc.code if isinstance(exc, OllamaDecisionError) else 'invalid_decision'

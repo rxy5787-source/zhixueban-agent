@@ -28,14 +28,17 @@ class MaterialArgs(Contract):
     fileId: ResourceId
 
 
+class ParseArgs(MaterialArgs):
+    topic: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)] | None = None
+
+
 class ParseResult(Contract):
     sections: list[Evidence] = Field(max_length=12)
     limited: bool
 
 
-class TopicArgs(MaterialArgs):
+class TopicArgs(ParseArgs):
     goal: ShortText
-    topic: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=120)] | None = None
 
 
 class KnowledgePoint(Contract):
@@ -117,7 +120,7 @@ def _library(context: ToolContext):
         yield db
 
 
-def _sections(context: ToolContext, ident: str) -> dict:
+def _sections(context: ToolContext, ident: str, topic: str | None = None) -> dict:
     from multimodal_reader import iter_automatic_sections
 
     if ident not in context.file_ids:
@@ -139,7 +142,8 @@ def _sections(context: ToolContext, ident: str) -> dict:
     parts = []
     remaining = 4800
     limited = False
-    with closing(iter_automatic_sections(path)) as source:
+    matcher = Scope(topic, 1, term=topic) if topic else None
+    with closing(iter_automatic_sections(path, pdf_page_limit=20 if matcher else 5)) as source:
         for section in source:
             if section.get('requiresVisual') or section.get('visualAssisted') or section.get('parsingError'):
                 limited = True
@@ -147,6 +151,19 @@ def _sections(context: ToolContext, ident: str) -> dict:
             if section.get('pagesAvailable', 0) > section.get('pagesLimit', 0):
                 limited = True
             text = usable_practice_text(section['text']).strip()
+            if matcher:
+                # Search each complete source unit before applying the output budget.
+                matching = (unit for unit in source_units(text) if matcher.match(unit))
+                for unit in matching:
+                    if len(parts) >= 12 or len(unit) > remaining:
+                        limited = True
+                        continue
+                    parts.append(unit)
+                    remaining -= len(unit) + 1
+                if len(parts) >= 12 or remaining <= 0:
+                    limited = True
+                    break
+                continue
             if not text:
                 continue
             if len(parts) >= 12 or remaining == 0:
@@ -167,17 +184,14 @@ def _sections(context: ToolContext, ident: str) -> dict:
 
 
 def _material(context, ident, topic=None):
-    source = '\n'.join(_sections(context, ident)['sections'])
-    if topic:
-        scope = Scope(topic, 1, term=topic)
-        source = '\n'.join(unit for unit in source_units(source) if scope.match(unit))
+    source = '\n'.join(_sections(context, ident, topic)['sections'])
     if not source_units(source):
         raise ToolFailure('insufficient_evidence')
     return source
 
 
 def parse_material(context, args):
-    return _sections(context, args.fileId)
+    return _sections(context, args.fileId, args.topic)
 
 
 def extract_points(context, args):
@@ -236,7 +250,7 @@ def study_registry() -> ToolRegistry:
 
     registry = ToolRegistry()
     for spec in (
-        ToolSpec('parse_material', '读取当前任务资料的可用文字。', MaterialArgs, ParseResult,
+        ToolSpec('parse_material', '读取当前任务资料。指定 topic 可检索全文中的原文片段。', ParseArgs, ParseResult,
                  'material:read', 90, parse_material),
         ToolSpec('extract_points', '从已授权资料提取有原文依据的知识点。', TopicArgs, PointsResult,
                  'material:read', 210, extract_points),
