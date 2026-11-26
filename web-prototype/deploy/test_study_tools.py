@@ -227,6 +227,39 @@ def test_agent_continues_after_several_large_previews(scope):
     assert len(result.trace) == 3
 
 
+def test_same_material_yields_different_strategy_from_scored_attempts(scope, tmp_path):
+    from shutil import copytree
+    from uuid import uuid4
+
+    # Two independent learning spaces start with exactly the same uploaded text.
+    second_root = tmp_path.parent / (tmp_path.name + '-second')
+    copytree(scope.root, second_root)
+    registry = study_tools.study_registry()
+    first = replace(scope, capabilities=frozenset({'memory:read'}))
+    second = replace(first, root=second_root, preferred_question_count=6, preferred_difficulty='advanced')
+
+    def save_answers(context, answer):
+        store = Store(context.root)
+        task_id = store.claim()['id']
+        questions = [{'id': 'q1', 'answer': 'A', 'points': ['WHERE']}]
+        with store.db() as db:
+            db.execute('DELETE FROM web_point_progress WHERE library_id=?', (context.library_id,))
+            for _ in range(2):
+                submission = web_practice.Submission(sessionId=uuid4(), answers=[
+                    {'questionId': 'q1', 'answer': answer}])
+                web_practice.save_session(db, submission, task_id, context.library_id, questions, time.time())
+
+    save_answers(first, 'B')
+    save_answers(second, 'A')
+    left = registry.execute(first, 'read_practice_memory', {}).data
+    right = registry.execute(second, 'read_practice_memory', {}).data
+    assert left['strategy'] == 'focus' and left['targets'][0]['correct'] == 0
+    assert right['strategy'] == 'reinforce' and right['targets'][0]['correct'] == 2
+    assert left['recentSessions'] == right['recentSessions'] == 2
+    assert (right['suggestedCount'], right['suggestedDifficulty']) == (6, 'advanced')
+    assert registry.execute(first, 'read_practice_memory', {'libraryId': 'other'}).code == 'invalid_arguments'
+
+
 def test_agent_does_not_dispatch_unknown_tools_or_retry_bad_model_output_forever(scope):
     class Unknown:
         def decide(self, messages, timeout):

@@ -31,6 +31,8 @@ class AgentJournal:
         ident = context.job_id
         payload = [1, goal, context.owner, context.library_id, sorted(context.file_ids),
                    sorted(context.capabilities), catalog, max_turns, model_key]
+        if context.preferred_difficulty != 'auto' or context.preferred_question_count:
+            payload.append([context.preferred_difficulty, context.preferred_question_count])
         fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         token = uuid4().hex
         with self.store.db() as db:

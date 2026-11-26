@@ -63,3 +63,9 @@
 使用同一打包目录中的 server 设置 `PYTHONPATH`，单独执行 `python -m pytest -q web-prototype/deploy/test_study_tools.py -k several_large_previews`，**1 passed**。三个大型返回值使原始 Transcript 超预算，模型替身仍收到有界消息，并能保留最新证据与旧资料定位参数。
 
 使用 `ZHIXUE_TEST_LIVE_AGENT=1` 和本机 `qwen3:1.7b` 执行 `python -m pytest -q -s web-prototype/deploy/test_study_tools.py -k live_qwen`，**2 passed**。这两项实测覆盖学情查询和原文问答兼容性。长资料尾部检索及历史压缩另由确定性回归覆盖。检索目前依赖考点词匹配，PDF 范围及 OCR 受运行时预算限制。
+
+## Phase 07
+
+2026-11-26 使用 `./tools/test-agent-harness.ps1`。打包 **39 passed / 2 skipped**，源码 **46 passed**，Web 构建与依赖检查通过。跳过的两项为本地 Ollama 测试。本阶段报告位于 `.verification/harness-9178a138fc434c97b5252d972497c830/`。
+
+两个隔离 SQLite 学习空间用同一考点和题目，通过实际判分路径写入不同作答记录。学情工具读取真实计算后的状态，错答空间进入薄弱点练习，答对空间进入巩固，用户偏好按任务上下文参与建议。结果说明项目逻辑在合成数据回归中的行为。真实用户学习效果、Web 的偏好传递和基于策略的完整生成仍待集成验证。

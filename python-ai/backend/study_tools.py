@@ -62,6 +62,14 @@ class ProgressResult(Contract):
     points: list[ProgressPoint] = Field(max_length=12)
 
 
+class PracticeMemoryResult(Contract):
+    strategy: Literal['diagnostic', 'focus', 'reinforce']
+    targets: list[ProgressPoint] = Field(max_length=3)
+    recentSessions: int = Field(ge=0, le=8)
+    suggestedCount: int = Field(ge=1, le=12)
+    suggestedDifficulty: Literal['basic', 'intermediate', 'advanced']
+
+
 class GenerateArgs(TopicArgs):
     count: int = Field(ge=1, le=4)
     difficulty: int = Field(default=0, ge=0, le=3)
@@ -207,6 +215,37 @@ def read_progress(context, args):
     return {'points': [web_practice.point_view(row) for row in rows]}
 
 
+def read_practice_memory(context, args):
+    """Compute a recommendation from existing mastery and recent scored attempts."""
+    with _library(context) as db:
+        # Use one snapshot so a concurrent submission cannot mix old and new evidence.
+        db.execute('BEGIN')
+        points = [web_practice.point_view(row) for row in db.execute(
+            '''SELECT * FROM web_point_progress WHERE library_id=? AND attempts>0
+               ORDER BY mastery, point_key LIMIT 12''', (context.library_id,))]
+        reports = [json.loads(row['report']) for row in db.execute(
+            '''SELECT report FROM web_practice_sessions WHERE library_id=?
+               ORDER BY created DESC, id DESC LIMIT 8''', (context.library_id,))]
+    recent_misses = {}
+    for report in reports:
+        for point in report.get('points', []):
+            label = point['point']
+            missed = max(0, point.get('sessionAnswered', 0) - point.get('sessionCorrect', 0))
+            recent_misses[label] = recent_misses.get(label, 0) + missed
+    weak = [point for point in points if point['reviewPriority']]
+    targets = sorted(weak, key=lambda point: (
+        -recent_misses.get(point['point'], 0), point['mastery'])) if weak else points
+    strategy = 'focus' if weak else 'reinforce' if targets else 'diagnostic'
+    preferred = context.preferred_difficulty
+    difficulty = preferred if preferred in ('basic', 'intermediate', 'advanced') else (
+        'intermediate' if strategy == 'reinforce' else 'basic')
+    count = context.preferred_question_count
+    if type(count) is not int or not 1 <= count <= 12:
+        count = 5 if strategy == 'reinforce' else 3
+    return {'strategy': strategy, 'targets': targets[:3], 'recentSessions': len(reports),
+            'suggestedCount': count, 'suggestedDifficulty': difficulty}
+
+
 def generate_practice(context, args):
     import generate_from_file as generator
 
@@ -256,6 +295,8 @@ def study_registry() -> ToolRegistry:
                  'material:read', 210, extract_points),
         ToolSpec('read_progress', '读取当前知识库实际作答后的掌握估计。', Empty, ProgressResult,
                  'progress:read', 10, read_progress),
+        ToolSpec('read_practice_memory', '根据当前库的真实作答、BKT 和学习偏好读取练习建议。', Empty,
+                 PracticeMemoryResult, 'memory:read', 10, read_practice_memory),
         ToolSpec('generate_practice', '从已授权资料生成待审核的单选题。', GenerateArgs, CandidatesResult,
                  'practice:generate', 240, generate_practice),
         ToolSpec('review_practice', '核对候选题的原文依据、答案和重复项。', ReviewArgs, ReviewResult,

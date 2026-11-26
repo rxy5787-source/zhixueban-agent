@@ -27,6 +27,8 @@ class ToolContext:
     file_ids: frozenset[str]
     capabilities: frozenset[str]
     job_id: str | None = None
+    preferred_difficulty: Literal['auto', 'basic', 'intermediate', 'advanced'] = 'auto'
+    preferred_question_count: int = 0
 
 
 class ToolFailure(Exception):
