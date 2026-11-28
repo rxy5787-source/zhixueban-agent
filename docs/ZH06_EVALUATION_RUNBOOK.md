@@ -72,7 +72,7 @@ human_review.csv 由人工填写，reviewed= yes 才被视为已审；facts_corr
 
     python python-ai/evaluation/zh06.py report --output artifacts/zh06-eval/full-qwen3-1.7b
 
-输出 report.md 和 report.json。报告逐项说明人工分子和有效分母；没有人工结果时显示“尚无人工有效样本”。脚本不会把自动质检接纳率当成事实正确率，也不会把GitHub CI的测试通过当作Qwen生成质量。
+输出 report.md 和 report.json。报告按计算机系统正向案例、SQL 正向案例和缺依据负例统计运行状态，包含未执行及未完成的请求。人工指标单独列出分子和有效分母，没有人工结果时显示“尚无人工有效样本”。
 
 ## 已知局限
 

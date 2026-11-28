@@ -18,6 +18,7 @@ import subprocess
 import sys
 import time
 import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from http.cookiejar import MozillaCookieJar
@@ -405,6 +406,12 @@ def metric(rows: list[dict], field: str) -> dict:
 
 
 def build_report(artifacts: dict[int, dict], reviews: dict[int, dict]) -> dict:
+    outcomes = {"system": Counter(), "sql": Counter(), "missingEvidence": Counter()}
+    for case in load_cases():
+        record = artifacts.get(case["id"])
+        status = record["runStatus"] if record is not None else "not_run"
+        group = "missingEvidence" if case["negative"] else case["group"]
+        outcomes[group][status] += 1
     terminal = {number: record for number, record in artifacts.items() if record.get("runStatus") in TERMINAL}
     manually_reviewed = {number: row for number, row in reviews.items()
                          if number in terminal and row.get("reviewed") == "yes"}
@@ -417,6 +424,7 @@ def build_report(artifacts: dict[int, dict], reviews: dict[int, dict]) -> dict:
         "expectedCases": 20,
         "attemptedCases": len(artifacts),
         "terminalCases": len(terminal),
+        "executionOutcomes": {group: dict(sorted(counts.items())) for group, counts in outcomes.items()},
         "humanReviewedCases": len(manually_reviewed),
         "humanUsability": metric(positive, "usable"),
         "factualCorrectness": metric(positive, "facts_correct"),
@@ -445,6 +453,15 @@ def report(out: Path) -> None:
         "# ZH-06 出题质量评测报告",
         "",
         f"- 计划案例：20；已有运行记录：{result['attemptedCases']}；到达终态：{result['terminalCases']}；已人工判定：{result['humanReviewedCases']}",
+    ]
+    for group, label in (
+        ("system", "计算机系统正向案例"),
+        ("sql", "SQL 正向案例"),
+        ("missingEvidence", "缺依据案例"),
+    ):
+        counts = result["executionOutcomes"][group]
+        md.append(f"- {label}运行状态：" + "、".join(f"`{status}` {count} 条" for status, count in counts.items()))
+    md += [
         f"- 人工可用率（正向样本）：{show(result['humanUsability'])}",
         f"- 事实正确率（正向样本）：{show(result['factualCorrectness'])}",
         f"- 原文依据支持率（正向样本）：{show(result['sourceSupport'])}",

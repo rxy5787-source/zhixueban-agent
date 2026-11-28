@@ -101,6 +101,11 @@ def test_review_denominators_ignore_missing_and_unjudged(tmp_path):
     assert report["expectedCases"] == 20
     assert report["attemptedCases"] == 4
     assert report["terminalCases"] == 3
+    assert report["executionOutcomes"] == {
+        "system": {"failed": 1, "not_run": 9, "still_running_at_timeout": 1, "succeeded": 1},
+        "sql": {"not_run": 7},
+        "missingEvidence": {"failed": 1},
+    }
     assert report["humanReviewedCases"] == 2
     assert report["humanUsability"] == {"numerator": 0, "denominator": 1, "rate": 0.0}
     assert report["factualCorrectness"] == {"numerator": 1, "denominator": 1, "rate": 1.0}
@@ -119,6 +124,7 @@ def test_empty_artifacts_produce_null_rates_without_fake_scores(tmp_path):
     assert result["humanUsability"]["rate"] is None
     assert result["medianTaskWallMs"] is None
     assert "尚无人工有效样本" in (output / "report.md").read_text(encoding="utf-8")
+    assert "缺依据案例运行状态：`not_run` 1 条" in (output / "report.md").read_text(encoding="utf-8")
 
 
 def test_manual_csv_is_not_overwritten(tmp_path):
